@@ -1,4 +1,4 @@
-# 🛡️ Enhanced VirusTotal IOC Scanner
+# 🛡️ VirusTotal IOC Scanner
 
 <div align="center">
   
