@@ -9,7 +9,7 @@
 
 </div>
 
-A powerful and streamlined tool for scanning Indicators of Compromise (IOCs) against the VirusTotal API with an interactive dashboard, enhanced visualizations, and robust security measures.
+A powerful and streamlined tool for scanning Indicators of Compromise (IOCs) against the VirusTotal API, featuring an interactive dashboard, enhanced visualizations, and robust security measures.
 
 ## ✨ Features
 
@@ -23,12 +23,6 @@ A powerful and streamlined tool for scanning Indicators of Compromise (IOCs) aga
 - 📋 **Export Options**: Save results to CSV for further analysis
 - 📈 **Enhanced Visualizations**: Detection rate graphs and threat severity indicators
 - ⏱️ **Smart Rate Limiting**: Automatic API request throttling to prevent quota issues
-
-## 🖼️ Screenshots
-
-<div align="center">
-  <img src="https://i.imgur.com/example.png" alt="Dashboard Screenshot" width="800">
-</div>
 
 ## 🚀 Installation
 
@@ -80,59 +74,49 @@ https://suspicious-url.com/path
 44d88612fea8a8f36de82e1278abb02f
 ```
 
-### Advanced Configuration
-
-You can set the number of parallel workers based on your API tier:
-- Standard API: 1-4 workers recommended
-- Premium API: 5-20 workers for improved throughput
-
 ## 📊 Dashboard Features
 
 The interactive dashboard provides:
 
-- 📋 Summary cards showing total IOCs, malicious, suspicious and clean counts
-- 📊 IOC type distribution chart
-- 🥧 Detection severity pie chart
-- 🔍 Advanced filtering options by IOC type, severity, and search terms
-- 📑 Detailed results table with color-coded severity indicators
-- ⚠️ Critical findings section for high-priority threats
-- 🔗 Links to VirusTotal for each detected IOC
+- 📋 **Summary Cards**: At-a-glance view of total IOCs, malicious, suspicious, and clean counts
+- 📊 **IOC Type Distribution**: Bar chart showing breakdown of different indicator types
+- 🥧 **Severity Analysis**: Pie chart depicting detection severity distribution
+- 🔍 **Advanced Filtering**: Filter results by IOC type, severity level, and custom search terms
+- 📑 **Color-Coded Results**: Detailed data table with color-coded severity indicators
+- ⚠️ **Critical Findings**: Highlighted section for high-priority threats requiring immediate attention
+- 🔗 **Direct VT Links**: One-click access to VirusTotal's detailed analysis for each IOC
 
-<div align="center">
-  <img src="https://i.imgur.com/example2.png" alt="Dashboard Details" width="800">
-</div>
+## 🔒 Security Features
 
-## 🔒 Security Measures
-
-- 🛡️ Secure API key storage with proper file permissions
-- 🧹 IOC sanitization to prevent code injection or script execution
-- 🔐 SSL verification for API requests
-- 👁️‍🗨️ Masked display of potentially malicious URLs/domains
+- 🛡️ **Secure Storage**: API key saved with restricted file permissions
+- 🧹 **IOC Sanitization**: Protection against code injection and script execution
+- 🔐 **Connection Security**: Configurable SSL verification for API requests
+- 👁️‍🗨️ **Safe Display**: Masked presentation of potentially malicious URLs/domains
+- 🔄 **Error Handling**: Graceful management of API rate limits and connection issues
 
 ## 📁 Project Structure
 
-- **vtscanner.py**: Main script file containing the core functionality
+- **vtscanner.py**: Main script containing the core scanning functionality
 - **dashboard_template.py**: Dashboard interface and visualization components
 - **requirements.txt**: Required Python dependencies
 
 ## ⚙️ API Optimization
 
 The tool is optimized for VirusTotal's Premium API with features like:
-- 📦 Batch processing endpoints for file hashes and URLs
-- 🚦 Throttled requests to stay within rate limits
-- 🔄 Error handling with automatic retries
-- 🧵 Efficient thread pooling for parallel execution
+- 📦 **Batch Processing**: Efficient handling of multiple file hashes and URLs
+- 🚦 **Intelligent Throttling**: Adaptive request rates to stay within API limits
+- 🔄 **Automatic Retries**: Smart retry logic for transient API errors
+- 🧵 **Thread Management**: Optimized thread pooling for parallel execution
 
-## 📋 Requirements
+## 📋 Dependencies
 
-The following Python packages are required:
 ```
-requests
-tqdm
-dash
-dash-bootstrap-components
-plotly
-pandas
+requests         # HTTP library for API communication
+tqdm             # Progress bar visualization
+dash             # Dashboard framework
+dash-bootstrap-components  # UI components
+plotly           # Interactive graphs and charts
+pandas           # Data manipulation and analysis
 ```
 
 ## 📄 License
@@ -151,7 +135,7 @@ This tool is provided for legitimate security research and incident response pur
 
 ## 📞 Contact
 
-For questions or feedback, please open an issue on GitHub or reach out through the repository.
+For questions, feedback, or contributions, please open an issue on GitHub or reach out through the repository.
 
 ---
 
