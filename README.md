@@ -137,10 +137,5 @@ This tool is provided for legitimate security research and incident response pur
 
 For questions, feedback, or contributions, please open an issue on GitHub or reach out through the repository.
 
----
 
-<div align="center">
-  
-Made with ❤️ for the cybersecurity community
 
-</div>
