@@ -123,12 +123,6 @@ pandas           # Data manipulation and analysis
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## 🙏 Acknowledgements
-
-- [VirusTotal](https://www.virustotal.com/) for their comprehensive threat intelligence platform
-- [Dash by Plotly](https://dash.plotly.com/) for the interactive visualization framework
-- [Requests](https://requests.readthedocs.io/) for the HTTP library
-
 ## ⚠️ Disclaimer
 
 This tool is provided for legitimate security research and incident response purposes only. Always ensure you have proper authorization before scanning any IOCs or accessing external services.
