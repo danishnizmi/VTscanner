@@ -7,6 +7,7 @@ and a responsive HTML template with filtering capabilities.
 """
 
 import os
+import re
 import time
 import logging
 from datetime import datetime
@@ -18,14 +19,8 @@ try:
     import plotly.express as px
     import plotly.graph_objects as go
 except ImportError:
-    print("Installing required packages...")
-    import subprocess
-    import sys
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--trusted-host", "pypi.org", 
-                        "--trusted-host", "files.pythonhosted.org", "plotly", "pandas"])
-    import pandas as pd
-    import plotly.express as px
-    import plotly.graph_objects as go
+    print("Missing required packages. Please install with: pip install pandas plotly")
+    raise
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -116,6 +111,32 @@ def get_ms_defender_span(status: str) -> str:
             </span>
             """
 
+def has_microsoft_detection(detection_string: str) -> bool:
+    """
+    Check if a detection string contains Microsoft detection information
+    
+    Args:
+        detection_string: The detection names string to check
+        
+    Returns:
+        True if Microsoft is found, False otherwise
+    """
+    if not detection_string or not isinstance(detection_string, str):
+        return False
+        
+    # Convert to lowercase for case-insensitive matching
+    detection_lower = detection_string.lower()
+    
+    # Check for multiple patterns that would indicate Microsoft detection
+    microsoft_patterns = ['microsoft:', 'microsoft/', 'trojan:win32', 'trojan.win32', 
+                         'microsoft ', 'ms defender', 'msdefender', 'msft']
+    
+    for pattern in microsoft_patterns:
+        if pattern in detection_lower:
+            return True
+    
+    return False
+
 def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path: Optional[str] = None, input_filename: str = "IOCs") -> Optional[str]:
     """
     Generate a static HTML report from scan results
@@ -139,6 +160,8 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
     # Convert vt_detection_percentage to numeric, coercing errors to NaN
     if 'vt_detection_percentage' in df.columns:
         df['vt_detection_percentage'] = pd.to_numeric(df['vt_detection_percentage'], errors='coerce')
+        # Round to 1 decimal place to fix the excessive decimal issue
+        df['vt_detection_percentage'] = df['vt_detection_percentage'].round(1)
     
     # Determine severity for each IOC
     def get_severity(row):
@@ -157,15 +180,29 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
     
     df["severity"] = df.apply(get_severity, axis=1)
     
-    # Set missing values and determine MS Defender status
+    # Set missing values 
     df = df.fillna("N/A")
     
+    # Add a special field for Microsoft detection status
+    # Look for Microsoft in all available rows including raw data
     def get_ms_defender_status(row):
-        # Check if Microsoft appears in detection_names
-        if "detection_names" in row and isinstance(row["detection_names"], str):
-            if "Microsoft:" in row["detection_names"]:
-                return "known"
-        return "unknown"
+        # If we have a precomputed ms_defender field
+        if 'ms_defender' in row and row['ms_defender'] in ['known', 'unknown']:
+            return row['ms_defender']
+        
+        # Check all detections (full string)
+        if 'detection_names' in row and isinstance(row['detection_names'], str):
+            if has_microsoft_detection(row['detection_names']):
+                return 'known'
+        
+        # Also check individual engine columns if they match Microsoft patterns
+        for key, value in row.items():
+            if isinstance(value, str) and key != 'detection_names':
+                if has_microsoft_detection(value):
+                    return 'known'
+        
+        # If we get here, Microsoft was not found
+        return 'unknown'
     
     df["ms_defender"] = df.apply(get_ms_defender_status, axis=1)
     
