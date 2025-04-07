@@ -53,7 +53,7 @@ A powerful and streamlined tool for scanning Indicators of Compromise (IOCs) aga
 Run the script and follow the interactive prompts:
 
 ```bash
-python vtscanner.py
+python main.py
 ```
 
 The tool will guide you through:
