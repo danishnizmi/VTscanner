@@ -6,6 +6,7 @@ A streamlined tool to scan Indicators of Compromise (IOCs) against VirusTotal AP
 with an interactive HTML report for visualizing results, optimized for both Standard
 and Premium API usage.
 
+Authors: VT Scanner Team
 Version: 1.2.0
 """
 
@@ -934,30 +935,59 @@ class VirusTotalScanner:
             print(f"{RED}No results to display.{RESET}")
             return None
         
-        # Prepare scan stats dictionary for the report
-        scan_stats = {
-            'total_iocs': self.total_iocs,
-            'malicious_count': self.malicious_count,
-            'suspicious_count': self.suspicious_count,
-            'error_count': self.error_count,
-            'critical_count': self.critical_count,
-            'scan_start_time': self.scan_start_time,
-            'total_engines': self.total_engines,
-            'ms_known_count': self.ms_known_count
-        }
-        
-        # Generate HTML report using the imported function
         try:
+            # Create a safe copy of the results to prevent errors in report generation
+            # This avoids the "iocList is not defined" error by ensuring safe JSON-serializable objects
+            safe_results = []
+            for result in self.results_list:
+                # Create a sanitized copy with simple data types for the report generator
+                sanitized = {}
+                for key, value in result.items():
+                    if key == 'last_analysis_results':
+                        # Don't include raw analysis results to avoid issues
+                        continue
+                    elif isinstance(value, (str, int, float, bool)) or value is None:
+                        sanitized[key] = value
+                    else:
+                        # Convert complex objects to string representation
+                        sanitized[key] = str(value)
+                safe_results.append(sanitized)
+            
+            # Prepare scan stats dictionary for the report
+            scan_stats = {
+                'total_iocs': self.total_iocs,
+                'malicious_count': self.malicious_count,
+                'suspicious_count': self.suspicious_count,
+                'error_count': self.error_count,
+                'critical_count': self.critical_count,
+                'scan_start_time': self.scan_start_time,
+                'total_engines': self.total_engines,
+                'ms_known_count': self.ms_known_count
+            }
+            
+            # Generate HTML report using the optimized report generator
             report_path = generate_html_report(
-                self.results_list, 
+                safe_results,
                 scan_stats, 
                 output_path=output_path, 
                 input_filename=input_filename
             )
+            
+            if not report_path:
+                # Fall back to basic info if report generation fails
+                logger.error("Report generator returned None, checking for issues")
+                print(f"{YELLOW}Report generation function returned None. Check logs for details.{RESET}")
+                return None
+                
             return report_path
+                
         except Exception as e:
-            logger.error(f"Error generating HTML report: {str(e)}")
+            # Capture and log details about the error
+            import traceback
+            error_details = traceback.format_exc()
+            logger.error(f"Error generating HTML report: {str(e)}\n{error_details}")
             print(f"{RED}Error generating HTML report: {str(e)}{RESET}")
+            print(f"{YELLOW}Check vt_scanner.log for more details.{RESET}")
             return None
 
 
@@ -1280,6 +1310,8 @@ def main():
             except Exception as e:
                 print(f"{YELLOW}Could not open browser: {e}{RESET}")
                 print(f"{YELLOW}Please open the HTML report manually.{RESET}")
+        else:
+            print(f"\n{RED}Failed to generate HTML report. Please check the log for details.{RESET}")
     
     print(f"\n{GREEN}Thank you for using the VirusTotal IOC Scanner!{RESET}")
 
@@ -1291,7 +1323,10 @@ if __name__ == "__main__":
         print(f"\n\n{YELLOW}Process interrupted by user. Exiting.{RESET}")
         sys.exit(0)
     except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
+        # Get full exception details for logging
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"Unexpected error: {e}\n{error_details}")
         print(f"\n{RED}An unexpected error occurred: {str(e)}{RESET}")
         print(f"{YELLOW}Check vt_scanner.log for details.{RESET}")
         sys.exit(1)
