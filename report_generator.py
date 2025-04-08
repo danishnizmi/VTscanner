@@ -4,6 +4,9 @@ VirusTotal IOC Scanner HTML Report Generator
 This module handles the generation of HTML reports for the VirusTotal IOC Scanner.
 It includes functionality for creating interactive visualizations, severity indicators,
 copy functionality for IOCs, and a responsive HTML template with filtering capabilities.
+
+Author: VT Scanner Team
+Version: 1.2.1
 """
 
 import os
@@ -12,11 +15,12 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union, Any
 
 try:
     import pandas as pd
     import plotly.express as px
+    import plotly.io as pio
 except ImportError:
     print("Missing required packages. Please install with: pip install pandas plotly")
     raise
@@ -26,24 +30,47 @@ logger = logging.getLogger(__name__)
 
 # Color palette for charts and styling
 COLORS = {
-    'primary': '#4361ee', 'secondary': '#555555', 'success': '#4cc9f0', 
-    'info': '#4895ef', 'warning': '#f9c74f', 'danger': '#f72585',
-    'light': '#e0e1dd', 'dark': '#1e1e1e', 'background': '#0b0c10',
-    'card_bg': '#1f2833', 'text': '#ffffff', 
-    'ms_known': '#e63946', 'ms_unknown': '#6c757d'
+    'primary': '#4361ee', 
+    'secondary': '#555555', 
+    'success': '#4cc9f0', 
+    'info': '#4895ef', 
+    'warning': '#f9c74f', 
+    'danger': '#f72585',
+    'light': '#e0e1dd', 
+    'dark': '#1e1e1e', 
+    'background': '#0b0c10',
+    'card_bg': '#1f2833', 
+    'text': '#ffffff', 
+    'ms_known': '#e63946', 
+    'ms_unknown': '#6c757d'
 }
 
-def sanitize_for_html(text):
+def sanitize_for_html(text: Any) -> str:
     """Safely encode a string for HTML output"""
     if not isinstance(text, str):
         text = str(text)
     return html.escape(text)
 
+def sanitize_for_js(text: Any) -> str:
+    """Safely encode a string for JavaScript use"""
+    if not isinstance(text, str):
+        text = str(text)
+    # Escape single quotes, double quotes, backslashes, and control characters
+    result = text.replace('\\', '\\\\')
+    result = result.replace("'", "\\'")
+    result = result.replace('"', '\\"')
+    result = result.replace('\n', '\\n')
+    result = result.replace('\r', '\\r')
+    result = result.replace('\t', '\\t')
+    return result
+
 def get_severity_class(severity: str) -> str:
     """Return the CSS class for the given severity level"""
     severity_classes = {
-        'Critical': 'severity-Critical', 'High': 'severity-High',
-        'Medium': 'severity-Medium', 'Clean': 'severity-Clean',
+        'Critical': 'severity-Critical', 
+        'High': 'severity-High',
+        'Medium': 'severity-Medium', 
+        'Clean': 'severity-Clean',
         'Error': 'severity-Error'
     }
     return severity_classes.get(severity, '')
@@ -51,11 +78,13 @@ def get_severity_class(severity: str) -> str:
 def get_severity_badge(severity: str) -> str:
     """Return HTML for a severity badge"""
     badge_classes = {
-        'Critical': 'badge badge-danger', 'High': 'badge badge-warning',
-        'Medium': 'badge badge-info', 'Clean': 'badge badge-success',
+        'Critical': 'badge badge-danger', 
+        'High': 'badge badge-warning',
+        'Medium': 'badge badge-info', 
+        'Clean': 'badge badge-success',
         'Error': 'badge badge-secondary'
     }
-    return f"<span class='{badge_classes[severity]}'>{severity}</span>" if severity in badge_classes else ""
+    return f'<span class="{badge_classes.get(severity, "")}">{severity}</span>' if severity in badge_classes else ""
 
 def get_ms_defender_span(status: str) -> str:
     """Return HTML for MS Defender status"""
@@ -76,145 +105,194 @@ def has_microsoft_detection(detection_string: str) -> bool:
     detection_lower = detection_string.lower()
     return any(pattern in detection_lower for pattern in microsoft_patterns)
 
-def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path: Optional[str] = None, input_filename: str = "IOCs") -> Optional[str]:
-    """Generate a static HTML report from scan results"""
+def generate_html_report(results_list: List[Dict], 
+                         scan_stats: Dict, 
+                         output_path: Optional[str] = None, 
+                         input_filename: str = "IOCs") -> Optional[str]:
+    """
+    Generate a static HTML report from scan results
+    
+    Args:
+        results_list: List of result dictionaries with detection information
+        scan_stats: Dictionary with scan statistics
+        output_path: Optional path for saving the report
+        input_filename: Original input filename for display
+        
+    Returns:
+        Path to the generated HTML report or None if generation failed
+    """
     if not results_list:
         logger.warning("No results to display.")
         return None
     
-    # Process and sanitize data
-    results_list_copy = [{k: sanitize_for_html(v) if isinstance(v, str) else v for k, v in result.items() 
-                         if k != 'last_analysis_results'} for result in results_list]
-    df = pd.DataFrame(results_list_copy)
-    
-    # Convert detection percentage to numeric
-    if 'vt_detection_percentage' in df.columns:
-        df['vt_detection_percentage'] = pd.to_numeric(df['vt_detection_percentage'], errors='coerce').round(1)
-    
-    # Determine severity based on detection percentage
-    def get_severity(row):
-        if pd.notna(row.get("error")) and row.get("error"):
-            return "Error"
-        if "vt_detection_percentage" not in row or pd.isna(row["vt_detection_percentage"]):
-            return "Error"
-        if row["vt_detection_percentage"] > 50: return "Critical"
-        if row["vt_detection_percentage"] > 25: return "High"
-        if row["vt_detection_percentage"] > 0: return "Medium"
-        return "Clean"
-    
-    df["severity"] = df.apply(get_severity, axis=1)
-    df = df.fillna("N/A")
-    
-    # Extract Microsoft Defender status
-    def get_ms_defender_status(row):
-        if 'ms_defender' in row and row['ms_defender'] in ['known', 'unknown']:
-            return row['ms_defender']
-        if 'detection_names' in row and isinstance(row['detection_names'], str):
-            if has_microsoft_detection(row['detection_names']):
-                return 'known'
-        return 'unknown'
-    
-    if 'ms_defender' not in df.columns:
-        df["ms_defender"] = df.apply(get_ms_defender_status, axis=1)
-    
-    # Prepare summary data for charts
-    ioc_type_counts = df["ioc_type"].value_counts().reset_index()
-    ioc_type_counts.columns = ["IOC Type", "Count"]
-    
-    severity_counts = df["severity"].value_counts().reset_index()
-    severity_counts.columns = ["Severity", "Count"]
-    
-    ms_defender_counts = df["ms_defender"].value_counts().reset_index()
-    ms_defender_counts.columns = ["Status", "Count"]
-    
-    # Extract stats from scan_stats or calculate from data
-    total_iocs = scan_stats.get('total_iocs', len(df))
-    malicious_count = scan_stats.get('malicious_count', df[df["severity"] == "Critical"].shape[0])
-    suspicious_count = scan_stats.get('suspicious_count', df[df["severity"] == "High"].shape[0])
-    error_count = scan_stats.get('error_count', df[df["severity"] == "Error"].shape[0])
-    clean_count = total_iocs - malicious_count - suspicious_count - error_count
-    
-    ms_known_count = df[df["ms_defender"] == "known"].shape[0]
-    ms_unknown_count = df[df["ms_defender"] == "unknown"].shape[0]
-    
-    scan_duration = datetime.now().timestamp() - scan_stats.get('scan_start_time', datetime.now().timestamp())
-    scan_duration_str = f"{int(scan_duration // 60)}m {int(scan_duration % 60)}s"
-    
-    # Create output path if not provided
-    if not output_path:
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        report_filename = f"{Path(input_filename).stem}_vt_report_{timestamp}.html"
-        output_path = str(Path.cwd() / report_filename)
-    
-    # Create charts
-    ioc_type_fig = px.bar(
-        ioc_type_counts, 
-        x='IOC Type', y='Count', color='IOC Type',
-        text='Count', color_discrete_sequence=px.colors.qualitative.Bold,
-        category_orders={"IOC Type": sorted(df["ioc_type"].unique())}
-    )
-    ioc_type_fig.update_layout(
-        template='plotly_dark',
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=20, r=20, t=30, b=20), height=350,
-        legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
-        xaxis=dict(title=dict(text="IOC Type", font=dict(size=14)), tickfont=dict(size=12)),
-        yaxis=dict(title=dict(text="Count", font=dict(size=14)), tickfont=dict(size=12))
-    )
-    ioc_type_fig.update_traces(textposition='auto', textfont=dict(size=14))
-    
-    # Severity chart
-    severity_colors = {
-        'Critical': COLORS['danger'], 'High': COLORS['warning'],
-        'Medium': COLORS['info'], 'Clean': COLORS['success'],
-        'Error': COLORS['secondary']
-    }
-    
-    severity_fig = px.pie(
-        severity_counts, names='Severity', values='Count',
-        color='Severity', color_discrete_map=severity_colors, hole=0.4
-    )
-    severity_fig.update_layout(
-        template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=20, r=20, t=30, b=20), height=350, showlegend=True,
-        legend=dict(font=dict(size=12), orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
-        annotations=[dict(text="Severity", font=dict(size=16), showarrow=False)]
-    )
-    
-    # MS Defender chart
-    ms_defender_fig = px.pie(
-        ms_defender_counts, names='Status', values='Count',
-        color='Status', color_discrete_map={
-            'known': COLORS['ms_known'], 'unknown': COLORS['ms_unknown'], 'N/A': COLORS['secondary']
-        }, hole=0.4
-    )
-    ms_defender_fig.update_layout(
-        template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=20, r=20, t=30, b=20), height=350, showlegend=True,
-        legend=dict(font=dict(size=12), orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
-        annotations=[dict(text="MS Defender", font=dict(size=16), showarrow=False)]
-    )
-    
-    # Prepare data for tables
-    critical_df = df[df['severity'].isin(['Critical', 'High'])]
-    ms_known_df = df[df['ms_defender'] == 'known']
-    ms_unknown_df = df[df['ms_defender'] == 'unknown']
-    
-    # Generate table rows
-    def generate_row(row, idx, with_ms_defender=True, with_metadata=False):
-        vt_link = row.get('vt_link', '')
-        if not isinstance(vt_link, str) or not vt_link.startswith(('http://', 'https://')):
-            vt_link = ''
+    try:
+        # Process and sanitize data
+        results_list_copy = [{k: sanitize_for_html(v) if isinstance(v, str) else v 
+                              for k, v in result.items() if k != 'last_analysis_results'} 
+                             for result in results_list]
+        
+        df = pd.DataFrame(results_list_copy)
+        
+        # Convert detection percentage to numeric
+        if 'vt_detection_percentage' in df.columns:
+            df['vt_detection_percentage'] = pd.to_numeric(df['vt_detection_percentage'], errors='coerce').round(1)
+        
+        # Determine severity based on detection percentage
+        def get_severity(row):
+            if pd.notna(row.get("error")) and row.get("error"):
+                return "Error"
+            if "vt_detection_percentage" not in row or pd.isna(row["vt_detection_percentage"]):
+                return "Error"
+            if row["vt_detection_percentage"] > 50: 
+                return "Critical"
+            if row["vt_detection_percentage"] > 25: 
+                return "High"
+            if row["vt_detection_percentage"] > 0: 
+                return "Medium"
+            return "Clean"
+        
+        # Add severity if not present
+        if 'severity' not in df.columns:
+            df["severity"] = df.apply(get_severity, axis=1)
             
-        error_display = ""
-        if pd.notna(row.get('error')) and row.get('error'):
-            error_display = f'<div class="error-msg">{row["error"]}</div>'
+        df = df.fillna("N/A")
+        
+        # Extract Microsoft Defender status
+        def get_ms_defender_status(row):
+            if 'ms_defender' in row and row['ms_defender'] in ['known', 'unknown']:
+                return row['ms_defender']
+            if 'detection_names' in row and isinstance(row['detection_names'], str):
+                if has_microsoft_detection(row['detection_names']):
+                    return 'known'
+            return 'unknown'
+        
+        if 'ms_defender' not in df.columns:
+            df["ms_defender"] = df.apply(get_ms_defender_status, axis=1)
+        
+        # Prepare summary data for charts
+        ioc_type_counts = df["ioc_type"].value_counts().reset_index()
+        ioc_type_counts.columns = ["IOC Type", "Count"]
+        
+        severity_counts = df["severity"].value_counts().reset_index()
+        severity_counts.columns = ["Severity", "Count"]
+        
+        ms_defender_counts = df["ms_defender"].value_counts().reset_index()
+        ms_defender_counts.columns = ["Status", "Count"]
+        
+        # Extract stats from scan_stats or calculate from data
+        total_iocs = scan_stats.get('total_iocs', len(df))
+        malicious_count = scan_stats.get('malicious_count', df[df["severity"] == "Critical"].shape[0])
+        suspicious_count = scan_stats.get('suspicious_count', df[df["severity"] == "High"].shape[0])
+        error_count = scan_stats.get('error_count', df[df["severity"] == "Error"].shape[0])
+        clean_count = total_iocs - malicious_count - suspicious_count - error_count
+        
+        ms_known_count = df[df["ms_defender"] == "known"].shape[0]
+        ms_unknown_count = df[df["ms_defender"] == "unknown"].shape[0]
+        
+        scan_duration = datetime.now().timestamp() - scan_stats.get('scan_start_time', datetime.now().timestamp())
+        scan_duration_str = f"{int(scan_duration // 60)}m {int(scan_duration % 60)}s"
+        
+        # Create output path if not provided
+        if not output_path:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            report_filename = f"{Path(input_filename).stem}_vt_report_{timestamp}.html"
+            output_path = str(Path.cwd() / report_filename)
+        
+        # Create charts
+        ioc_type_fig = px.bar(
+            ioc_type_counts, 
+            x='IOC Type', y='Count', color='IOC Type',
+            text='Count', color_discrete_sequence=px.colors.qualitative.Bold,
+            category_orders={"IOC Type": sorted(df["ioc_type"].unique())}
+        )
+        ioc_type_fig.update_layout(
+            template='plotly_dark',
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=20, r=20, t=30, b=20), height=350,
+            legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
+            xaxis=dict(title=dict(text="IOC Type", font=dict(size=14)), tickfont=dict(size=12)),
+            yaxis=dict(title=dict(text="Count", font=dict(size=14)), tickfont=dict(size=12))
+        )
+        ioc_type_fig.update_traces(textposition='auto', textfont=dict(size=14))
+        
+        # Use divs for plotly charts instead of full HTML
+        config = {'displayModeBar': False, 'responsive': True}
+        ioc_type_chart = pio.to_html(ioc_type_fig, full_html=False, 
+                                      include_plotlyjs=False, config=config)
+        
+        # Severity chart
+        severity_colors = {
+            'Critical': COLORS['danger'], 
+            'High': COLORS['warning'],
+            'Medium': COLORS['info'], 
+            'Clean': COLORS['success'],
+            'Error': COLORS['secondary']
+        }
+        
+        severity_fig = px.pie(
+            severity_counts, names='Severity', values='Count',
+            color='Severity', color_discrete_map=severity_colors, hole=0.4
+        )
+        severity_fig.update_layout(
+            template='plotly_dark', 
+            paper_bgcolor='rgba(0,0,0,0)', 
+            plot_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=20, r=20, t=30, b=20), 
+            height=350, 
+            showlegend=True,
+            legend=dict(font=dict(size=12), orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
+            annotations=[dict(text="Severity", font=dict(size=16), showarrow=False)]
+        )
+        
+        severity_chart = pio.to_html(severity_fig, full_html=False, 
+                                     include_plotlyjs=False, config=config)
+        
+        # MS Defender chart
+        ms_defender_fig = px.pie(
+            ms_defender_counts, names='Status', values='Count',
+            color='Status', color_discrete_map={
+                'known': COLORS['ms_known'], 
+                'unknown': COLORS['ms_unknown'], 
+                'N/A': COLORS['secondary']
+            }, hole=0.4
+        )
+        ms_defender_fig.update_layout(
+            template='plotly_dark', 
+            paper_bgcolor='rgba(0,0,0,0)', 
+            plot_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=20, r=20, t=30, b=20), 
+            height=350, 
+            showlegend=True,
+            legend=dict(font=dict(size=12), orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
+            annotations=[dict(text="MS Defender", font=dict(size=16), showarrow=False)]
+        )
+        
+        ms_defender_chart = pio.to_html(ms_defender_fig, full_html=False, 
+                                        include_plotlyjs=False, config=config)
+        
+        # Prepare data for tables
+        critical_df = df[df['severity'].isin(['Critical', 'High'])]
+        ms_known_df = df[df['ms_defender'] == 'known']
+        ms_unknown_df = df[df['ms_defender'] == 'unknown']
+        
+        # Generate table rows
+        def generate_row(row, idx, with_ms_defender=True, with_metadata=False):
+            vt_link = row.get('vt_link', '')
+            if not isinstance(vt_link, str) or not vt_link.startswith(('http://', 'https://')):
+                vt_link = ''
+                
+            error_display = ""
+            if pd.notna(row.get('error')) and row.get('error'):
+                error_display = f'<div class="error-msg">{row["error"]}</div>'
             
-        basic_cols = f"""
+            # Use sanitize_for_js for the copy button to prevent issues with quotes
+            safe_ioc = sanitize_for_js(row['ioc'])
+                
+            basic_cols = f"""
                 <td>
                     <div class="ioc-container">
                         <span class="ioc-value">{row['ioc']}</span>
-                        <button class="copy-btn" onclick="copyToClipboard('{row['ioc']}')">
+                        <button class="copy-btn" onclick="copyToClipboard('{safe_ioc}')">
                             <i class="fas fa-copy"></i>
                         </button>
                     </div>
@@ -222,55 +300,61 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
                 </td>
                 <td>{row['ioc_type']}</td>
                 <td>{row.get('vt_detection_percentage', 'N/A')}</td>
-                <td class="{get_severity_class(row['severity'])}">{row['severity']} {get_severity_badge(row['severity'])}</td>
-        """
-        
-        if with_ms_defender:
-            basic_cols += f"<td>{get_ms_defender_span(row.get('ms_defender', 'unknown'))}</td>"
+                <td class="{get_severity_class(row['severity'])}">{get_severity_badge(row['severity'])}</td>
+            """
             
-        basic_cols += f"""
+            if with_ms_defender:
+                basic_cols += f"<td>{get_ms_defender_span(row.get('ms_defender', 'unknown'))}</td>"
+                
+            basic_cols += f"""
                 <td>{row.get('detection_names', '')}</td>
                 <td><a href='{vt_link}' target='_blank'>Investigate</a></td>
-        """
-        
-        if with_metadata:
+            """
+            
+            if with_metadata:
+                return f"""
+                <tr class="{'bg-ms-known' if row['ms_defender'] == 'known' else ''}" data-ioc-type="{row['ioc_type']}" data-severity="{row['severity']}" data-ms-detection="{row['ms_defender']}" data-ioc-index="{idx}">
+                    {basic_cols}
+                    <td>{row.get('vt_detection_ratio', 'N/A')}</td>
+                    <td>{row.get('category', '')}</td>
+                    <td>{row.get('vt_last_analysis_date', 'N/A')}</td>
+                    <td><a href='{vt_link}' target='_blank'>View</a></td>
+                </tr>
+                """
+            
             return f"""
-            <tr class="{'bg-ms-known' if row['ms_defender'] == 'known' else ''}" data-ioc-type="{row['ioc_type']}" data-severity="{row['severity']}" data-ms-detection="{row['ms_defender']}" data-ioc-index="{idx}">
+            <tr data-ioc-type="{row['ioc_type']}" data-severity="{row['severity']}" data-ms-detection="{row['ms_defender']}" data-ioc-index="{idx}">
                 {basic_cols}
-                <td>{row.get('vt_detection_ratio', 'N/A')}</td>
-                <td>{row.get('category', '')}</td>
-                <td>{row.get('vt_last_analysis_date', 'N/A')}</td>
-                <td><a href='{vt_link}' target='_blank'>View</a></td>
             </tr>
             """
         
-        return f"""
-        <tr data-ioc-type="{row['ioc_type']}" data-severity="{row['severity']}" data-ms-detection="{row['ms_defender']}" data-ioc-index="{idx}">
-            {basic_cols}
-        </tr>
-        """
-    
-    # Generate table HTML
-    critical_rows = "".join([generate_row(row, idx) for idx, row in critical_df.iterrows()])
-    ms_detection_rows = "".join([generate_row(row, idx, with_ms_defender=False) for idx, row in ms_known_df.iterrows()])
-    ms_unknown_rows = "".join([generate_row(row, idx, with_ms_defender=False) for idx, row in ms_unknown_df.iterrows()])
-    all_results_rows = "".join([generate_row(row, idx, with_ms_defender=True, with_metadata=True) for idx, row in df.iterrows()])
-    
-    # Create dropdown options
-    ioc_type_options = "".join([f'<option value="{ioc_type}">{ioc_type}</option>' for ioc_type in sorted(df['ioc_type'].unique())])
-    severity_options = "".join([f'<option value="{severity}">{severity}</option>' for severity in ['Critical', 'High', 'Medium', 'Clean', 'Error'] if severity in df['severity'].unique()])
-    
-    # Prepare export data
-    export_data = []
-    for _, row in df.iterrows():
-        export_row = {k: v for k, v in row.items() if k != 'last_analysis_results'}
-        export_data.append(export_row)
-    
-    # Convert to JSON for the CSV export functionality
-    csv_export_data = json.dumps(export_data)
-    
-    # HTML template with all styles directly embedded and curly braces properly escaped
-    html_template = """<!DOCTYPE html>
+        # Generate table HTML
+        critical_rows = "".join([generate_row(row, idx) for idx, row in critical_df.iterrows()])
+        ms_detection_rows = "".join([generate_row(row, idx, with_ms_defender=False) 
+                                    for idx, row in ms_known_df.iterrows()])
+        ms_unknown_rows = "".join([generate_row(row, idx, with_ms_defender=False) 
+                                  for idx, row in ms_unknown_df.iterrows()])
+        all_results_rows = "".join([generate_row(row, idx, with_ms_defender=True, with_metadata=True) 
+                                   for idx, row in df.iterrows()])
+        
+        # Create dropdown options
+        ioc_type_options = "".join([f'<option value="{ioc_type}">{ioc_type}</option>' 
+                                   for ioc_type in sorted(df['ioc_type'].unique())])
+        severity_options = "".join([f'<option value="{severity}">{severity}</option>' 
+                                   for severity in ['Critical', 'High', 'Medium', 'Clean', 'Error'] 
+                                   if severity in df['severity'].unique()])
+        
+        # Prepare export data
+        export_data = []
+        for _, row in df.iterrows():
+            export_row = {k: v for k, v in row.items() if k != 'last_analysis_results'}
+            export_data.append(export_row)
+        
+        # Convert to JSON for the CSV export functionality
+        csv_export_data = json.dumps(export_data)
+        
+        # HTML template with all styles directly embedded
+        html_template = """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -280,7 +364,13 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
     <style>
-        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0b0c10; color: #ffffff; margin: 0; padding: 0; }}
+        body {{ 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background-color: #0b0c10; 
+            color: #ffffff; 
+            margin: 0; 
+            padding: 0; 
+        }}
         .container {{ width: 95%; margin: 0 auto; padding: 20px; }}
         .header {{ text-align: center; margin-bottom: 30px; color: #4361ee; padding: 20px 0; border-bottom: 1px solid #4361ee; }}
         .header h1 {{ font-size: 2.5rem; margin-bottom: 10px; }}
@@ -1115,56 +1205,58 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
 </body>
 </html>
 """
-    
-    # Replace template placeholders
-    input_filename_name = sanitize_for_html(Path(input_filename).name)
-    generation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Format charts for insertion
-    ioc_type_chart = ioc_type_fig.to_html(full_html=False, include_plotlyjs=False, default_height='350px')
-    severity_chart = severity_fig.to_html(full_html=False, include_plotlyjs=False, default_height='350px')
-    ms_defender_chart = ms_defender_fig.to_html(full_html=False, include_plotlyjs=False, default_height='350px')
-    
-    # Perform replacements
-    formatted_html = html_template.format(
-        input_filename=sanitize_for_html(input_filename),
-        input_filename_name=input_filename_name,
-        generation_time=generation_time,
-        total_iocs=total_iocs,
-        malicious_count=malicious_count,
-        suspicious_count=suspicious_count,
-        clean_count=clean_count,
-        critical_count=len(critical_df),
-        ms_known_count=ms_known_count,
-        ms_unknown_count=ms_unknown_count,
-        ioc_type_chart=ioc_type_chart,
-        severity_chart=severity_chart,
-        ms_defender_chart=ms_defender_chart,
-        ioc_type_options=ioc_type_options,
-        severity_options=severity_options,
-        critical_rows=critical_rows,
-        ms_detection_rows=ms_detection_rows,
-        ms_unknown_rows=ms_unknown_rows,
-        all_results_rows=all_results_rows,
-        scan_duration=scan_duration_str,
-        csv_export_data=csv_export_data
-    )
-    
-    # Write the HTML report to file
-    try:
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(formatted_html)
-        print(f"HTML report generated: {output_path}")
         
-        # Try to open the report in a browser
+        # Replace template placeholders
+        input_filename_name = sanitize_for_html(Path(input_filename).name)
+        generation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Perform replacements
+        formatted_html = html_template.format(
+            input_filename=sanitize_for_html(input_filename),
+            input_filename_name=input_filename_name,
+            generation_time=generation_time,
+            total_iocs=total_iocs,
+            malicious_count=malicious_count,
+            suspicious_count=suspicious_count,
+            clean_count=clean_count,
+            critical_count=len(critical_df),
+            ms_known_count=ms_known_count,
+            ms_unknown_count=ms_unknown_count,
+            ioc_type_chart=ioc_type_chart,
+            severity_chart=severity_chart,
+            ms_defender_chart=ms_defender_chart,
+            ioc_type_options=ioc_type_options,
+            severity_options=severity_options,
+            critical_rows=critical_rows,
+            ms_detection_rows=ms_detection_rows,
+            ms_unknown_rows=ms_unknown_rows,
+            all_results_rows=all_results_rows,
+            scan_duration=scan_duration_str,
+            csv_export_data=csv_export_data
+        )
+        
+        # Write the HTML report to file
         try:
-            import webbrowser
-            webbrowser.open('file://' + os.path.abspath(output_path))
-        except:
-            pass
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(formatted_html)
+            print(f"HTML report generated: {output_path}")
             
-    except Exception as e:
-        logger.error(f"Error generating HTML report: {str(e)}")
-        return None
+            # Try to open the report in a browser
+            try:
+                import webbrowser
+                webbrowser.open('file://' + os.path.abspath(output_path))
+            except Exception as e:
+                logger.debug(f"Could not open browser: {e}")
+                
+            return output_path
+                
+        except Exception as e:
+            logger.error(f"Error generating HTML report: {str(e)}")
+            return None
     
-    return output_path
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"Error generating HTML report: {str(e)}\n{error_details}")
+        print(f"Error generating HTML report: {str(e)}")
+        return None
