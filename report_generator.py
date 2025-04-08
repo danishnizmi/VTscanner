@@ -226,7 +226,7 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
         """
         
         if with_ms_defender:
-            basic_cols += f"<td>{row.get('ms_defender', 'N/A')}</td>"
+            basic_cols += f"<td>{get_ms_defender_span(row.get('ms_defender', 'unknown'))}</td>"
             
         basic_cols += f"""
                 <td>{row.get('detection_names', '')}</td>
@@ -238,7 +238,6 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
             <tr class="{'bg-ms-known' if row['ms_defender'] == 'known' else ''}" data-ioc-type="{row['ioc_type']}" data-severity="{row['severity']}" data-ms-detection="{row['ms_defender']}" data-ioc-index="{idx}">
                 {basic_cols}
                 <td>{row.get('vt_detection_ratio', 'N/A')}</td>
-                <td>{get_ms_defender_span(row['ms_defender'])}</td>
                 <td>{row.get('category', '')}</td>
                 <td>{row.get('vt_last_analysis_date', 'N/A')}</td>
                 <td><a href='{vt_link}' target='_blank'>View</a></td>
@@ -255,7 +254,7 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
     critical_rows = "".join([generate_row(row, idx) for idx, row in critical_df.iterrows()])
     ms_detection_rows = "".join([generate_row(row, idx, with_ms_defender=False) for idx, row in ms_known_df.iterrows()])
     ms_unknown_rows = "".join([generate_row(row, idx, with_ms_defender=False) for idx, row in ms_unknown_df.iterrows()])
-    all_results_rows = "".join([generate_row(row, idx, with_ms_defender=False, with_metadata=True) for idx, row in df.iterrows()])
+    all_results_rows = "".join([generate_row(row, idx, with_ms_defender=True, with_metadata=True) for idx, row in df.iterrows()])
     
     # Create dropdown options
     ioc_type_options = "".join([f'<option value="{ioc_type}">{ioc_type}</option>' for ioc_type in sorted(df['ioc_type'].unique())])
@@ -270,7 +269,7 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
     # Convert to JSON for the CSV export functionality
     csv_export_data = json.dumps(export_data)
     
-    # Use the inline template directly - don't try to load from a file
+    # HTML template with all styles directly embedded
     html_template = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -281,99 +280,105 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0b0c10; color: #ffffff; margin: 0; padding: 0; }
-        .container { width: 95%; margin: 0 auto; padding: 20px; }
-        .header { text-align: center; margin-bottom: 30px; color: #4361ee; padding: 20px 0; border-bottom: 1px solid #4361ee; }
-        .header h1 { font-size: 2.5rem; margin-bottom: 10px; }
-        .header p { font-size: 1.1rem; opacity: 0.8; }
-        .card { background-color: #1f2833; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); margin-bottom: 25px; overflow: hidden; transition: all 0.3s ease; }
-        .card:hover { box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6); transform: translateY(-2px); }
-        .card-header { background-color: #1f2833; color: #e0e1dd; padding: 15px 20px; font-weight: bold; font-size: 1.2rem; border-bottom: 2px solid rgba(255, 255, 255, 0.1); display: flex; justify-content: space-between; align-items: center; }
-        .card-header .actions { display: flex; gap: 10px; }
-        .card-body { padding: 20px; }
-        .row { display: flex; flex-wrap: wrap; margin: 0 -15px; gap: 0; }
-        .col { flex: 1; padding: 0 15px; min-width: 250px; margin-bottom: 20px; }
-        .stats-card { text-align: center; padding: 20px 15px; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; transition: transform 0.2s ease; }
-        .stats-card:hover { transform: scale(1.02); }
-        .stats-card i { margin-bottom: 10px; opacity: 0.9; }
-        .stats-card h4 { margin-top: 5px; margin-bottom: 15px; font-size: 1.1rem; opacity: 0.9; }
-        .stats-card h2 { font-size: 2.8rem; margin: 0; font-weight: 600; }
-        .table-container { overflow-x: auto; border-radius: 4px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) inset; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; overflow: hidden; }
-        th, td { padding: 12px 15px; text-align: left; border: 1px solid #444; }
-        th { background-color: #4361ee; color: white; font-weight: 600; position: sticky; top: 0; box-shadow: 0 2px 2px rgba(0, 0, 0, 0.1); }
-        tr:nth-child(even) { background-color: rgba(255, 255, 255, 0.05); }
-        tr:hover { background-color: rgba(255, 255, 255, 0.1); }
-        .chart-container { width: 100%; margin-top: 15px; position: relative; }
-        .footer { text-align: center; margin-top: 40px; padding: 20px 0; border-top: 1px solid #555555; color: #e0e1dd; font-size: 1.1rem; }
-        .ioc-container { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
-        .ioc-value { max-width: calc(100% - 30px); overflow: hidden; text-overflow: ellipsis; }
-        .copy-btn { background: none; border: none; color: #4361ee; cursor: pointer; padding: 3px 6px; border-radius: 3px; transition: all 0.2s; opacity: 0.6; }
-        .copy-btn:hover { opacity: 1; background-color: rgba(67, 97, 238, 0.1); }
-        .copy-btn.copied { color: #4cc9f0; }
-        .action-btn { background-color: #4361ee; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.85rem; display: flex; align-items: center; gap: 5px; transition: background-color 0.2s; }
-        .action-btn:hover { background-color: #4895ef; }
-        .action-btn.secondary { background-color: #555555; }
-        .action-btn.secondary:hover { background-color: #666666; }
-        .error-msg { color: #f72585; font-size: 0.85rem; margin-top: 4px; }
-        .notification { position: fixed; top: 20px; right: 20px; padding: 10px 20px; background-color: #4cc9f0; color: white; border-radius: 4px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); z-index: 1000; opacity: 0; transform: translateY(-20px); transition: all 0.3s; }
-        .notification.show { opacity: 1; transform: translateY(0); }
-        .primary { color: #4361ee; }
-        .success { color: #4cc9f0; }
-        .info { color: #4895ef; }
-        .warning { color: #f9c74f; }
-        .danger { color: #f72585; }
-        .bg-danger { background-color: rgba(247, 37, 133, 0.15); }
-        .bg-warning { background-color: rgba(249, 199, 79, 0.15); }
-        .bg-info { background-color: rgba(72, 149, 239, 0.15); }
-        .bg-success { background-color: rgba(76, 201, 240, 0.15); }
-        .bg-error { background-color: rgba(85, 85, 85, 0.15); }
-        .ms-known { color: #e63946; }
-        .ms-unknown { color: #6c757d; }
-        .bg-ms-known { background-color: rgba(230, 57, 70, 0.15); }
-        .severity-Critical { color: #f72585; font-weight: bold; }
-        .severity-High { color: #f9c74f; font-weight: bold; }
-        .severity-Medium { color: #4895ef; }
-        .severity-Clean { color: #4cc9f0; }
-        .severity-Error { color: #555555; }
-        a { color: #4895ef; text-decoration: none; transition: color 0.2s; }
-        a:hover { color: #4361ee; text-decoration: underline; }
-        .filter-container { padding: 20px; background-color: #1f2833; border-radius: 8px; margin-bottom: 20px; border: 1px solid rgba(255, 255, 255, 0.1); }
-        .filter-title { font-weight: bold; margin-bottom: 15px; font-size: 1.1rem; }
-        .filter-row { display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 15px; align-items: flex-end; }
-        .filter-group { flex: 1; min-width: 200px; }
-        .filter-group label { display: block; margin-bottom: 8px; font-weight: 500; opacity: 0.9; }
-        .filter-input { width: 100%; padding: 10px 12px; background-color: #1f2833; color: #e0e1dd; border: 1px solid #4361ee; border-radius: 4px; font-size: 1rem; transition: all 0.2s; }
-        .filter-input:focus { outline: none; border-color: #4895ef; box-shadow: 0 0 0 2px rgba(67, 97, 238, 0.3); }
-        .filter-btn { background-color: #4361ee; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: 600; transition: background-color 0.2s; display: flex; align-items: center; gap: 8px; }
-        .filter-btn:hover { background-color: #4895ef; }
-        .tooltip { position: relative; display: inline-block; cursor: help; }
-        .tooltip .tooltiptext { visibility: hidden; width: 200px; background-color: #1f2833; color: #e0e1dd; text-align: center; border-radius: 6px; padding: 10px; position: absolute; z-index: 1; bottom: 125%; left: 50%; margin-left: -100px; opacity: 0; transition: opacity 0.3s; font-size: 0.9rem; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3); border: 1px solid #4361ee; }
-        .tooltip:hover .tooltiptext { visibility: visible; opacity: 1; }
-        .badge { display: inline-block; padding: 4px 8px; font-size: 0.75rem; font-weight: 600; line-height: 1; text-align: center; white-space: nowrap; vertical-align: baseline; border-radius: 10px; margin-left: 5px; }
-        .badge-primary { background-color: #4361ee; color: white; }
-        .badge-danger { background-color: #f72585; color: white; }
-        .badge-warning { background-color: #f9c74f; color: black; }
-        .badge-success { background-color: #4cc9f0; color: white; }
-        .badge-info { background-color: #4895ef; color: white; }
-        .badge-secondary { background-color: #555555; color: white; }
-        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.7); opacity: 0; transition: opacity 0.3s; }
-        .modal.show { display: block; opacity: 1; }
-        .modal-content { background-color: #1f2833; margin: 10% auto; padding: 20px; border-radius: 8px; max-width: 500px; box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5); transform: translateY(-20px); transition: transform 0.3s; }
-        .modal.show .modal-content { transform: translateY(0); }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
-        .modal-title { font-size: 1.2rem; font-weight: bold; color: #e0e1dd; }
-        .close-modal { background: none; border: none; font-size: 1.5rem; color: #e0e1dd; cursor: pointer; transition: color 0.2s; }
-        .close-modal:hover { color: #f72585; }
-        .modal-body { margin-bottom: 20px; }
-        .modal-footer { display: flex; justify-content: flex-end; gap: 10px; }
-        @media (max-width: 768px) {
-            .container { width: 100%; padding: 10px; }
-            .col { flex: 100%; padding: 0 10px; }
-            .card-header { flex-direction: column; align-items: stretch; }
-            .card-header .actions { margin-top: 10px; }
-            .filter-group { flex: 100%; }
-        }
+        body {{ 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background-color: #0b0c10; 
+            color: #ffffff; 
+            margin: 0; 
+            padding: 0; 
+        }}
+        .container {{ width: 95%; margin: 0 auto; padding: 20px; }}
+        .header {{ text-align: center; margin-bottom: 30px; color: #4361ee; padding: 20px 0; border-bottom: 1px solid #4361ee; }}
+        .header h1 {{ font-size: 2.5rem; margin-bottom: 10px; }}
+        .header p {{ font-size: 1.1rem; opacity: 0.8; }}
+        .card {{ background-color: #1f2833; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); margin-bottom: 25px; overflow: hidden; transition: all 0.3s ease; }}
+        .card:hover {{ box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6); transform: translateY(-2px); }}
+        .card-header {{ background-color: #1f2833; color: #e0e1dd; padding: 15px 20px; font-weight: bold; font-size: 1.2rem; border-bottom: 2px solid rgba(255, 255, 255, 0.1); display: flex; justify-content: space-between; align-items: center; }}
+        .card-header .actions {{ display: flex; gap: 10px; }}
+        .card-body {{ padding: 20px; }}
+        .row {{ display: flex; flex-wrap: wrap; margin: 0 -15px; gap: 0; }}
+        .col {{ flex: 1; padding: 0 15px; min-width: 250px; margin-bottom: 20px; }}
+        .stats-card {{ text-align: center; padding: 20px 15px; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; transition: transform 0.2s ease; }}
+        .stats-card:hover {{ transform: scale(1.02); }}
+        .stats-card i {{ margin-bottom: 10px; opacity: 0.9; }}
+        .stats-card h4 {{ margin-top: 5px; margin-bottom: 15px; font-size: 1.1rem; opacity: 0.9; }}
+        .stats-card h2 {{ font-size: 2.8rem; margin: 0; font-weight: 600; }}
+        .table-container {{ overflow-x: auto; border-radius: 4px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) inset; }}
+        table {{ width: 100%; border-collapse: collapse; margin-top: 10px; overflow: hidden; }}
+        th, td {{ padding: 12px 15px; text-align: left; border: 1px solid #444; }}
+        th {{ background-color: #4361ee; color: white; font-weight: 600; position: sticky; top: 0; box-shadow: 0 2px 2px rgba(0, 0, 0, 0.1); }}
+        tr:nth-child(even) {{ background-color: rgba(255, 255, 255, 0.05); }}
+        tr:hover {{ background-color: rgba(255, 255, 255, 0.1); }}
+        .chart-container {{ width: 100%; margin-top: 15px; position: relative; }}
+        .footer {{ text-align: center; margin-top: 40px; padding: 20px 0; border-top: 1px solid #555555; color: #e0e1dd; font-size: 1.1rem; }}
+        .ioc-container {{ display: flex; align-items: center; justify-content: space-between; gap: 5px; }}
+        .ioc-value {{ max-width: calc(100% - 30px); overflow: hidden; text-overflow: ellipsis; }}
+        .copy-btn {{ background: none; border: none; color: #4361ee; cursor: pointer; padding: 3px 6px; border-radius: 3px; transition: all 0.2s; opacity: 0.6; }}
+        .copy-btn:hover {{ opacity: 1; background-color: rgba(67, 97, 238, 0.1); }}
+        .copy-btn.copied {{ color: #4cc9f0; }}
+        .action-btn {{ background-color: #4361ee; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.85rem; display: flex; align-items: center; gap: 5px; transition: background-color 0.2s; }}
+        .action-btn:hover {{ background-color: #4895ef; }}
+        .action-btn.secondary {{ background-color: #555555; }}
+        .action-btn.secondary:hover {{ background-color: #666666; }}
+        .error-msg {{ color: #f72585; font-size: 0.85rem; margin-top: 4px; }}
+        .notification {{ position: fixed; top: 20px; right: 20px; padding: 10px 20px; background-color: #4cc9f0; color: white; border-radius: 4px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); z-index: 1000; opacity: 0; transform: translateY(-20px); transition: all 0.3s; }}
+        .notification.show {{ opacity: 1; transform: translateY(0); }}
+        .primary {{ color: #4361ee; }}
+        .success {{ color: #4cc9f0; }}
+        .info {{ color: #4895ef; }}
+        .warning {{ color: #f9c74f; }}
+        .danger {{ color: #f72585; }}
+        .bg-danger {{ background-color: rgba(247, 37, 133, 0.15); }}
+        .bg-warning {{ background-color: rgba(249, 199, 79, 0.15); }}
+        .bg-info {{ background-color: rgba(72, 149, 239, 0.15); }}
+        .bg-success {{ background-color: rgba(76, 201, 240, 0.15); }}
+        .bg-error {{ background-color: rgba(85, 85, 85, 0.15); }}
+        .ms-known {{ color: #e63946; }}
+        .ms-unknown {{ color: #6c757d; }}
+        .bg-ms-known {{ background-color: rgba(230, 57, 70, 0.15); }}
+        .severity-Critical {{ color: #f72585; font-weight: bold; }}
+        .severity-High {{ color: #f9c74f; font-weight: bold; }}
+        .severity-Medium {{ color: #4895ef; }}
+        .severity-Clean {{ color: #4cc9f0; }}
+        .severity-Error {{ color: #555555; }}
+        a {{ color: #4895ef; text-decoration: none; transition: color 0.2s; }}
+        a:hover {{ color: #4361ee; text-decoration: underline; }}
+        .filter-container {{ padding: 20px; background-color: #1f2833; border-radius: 8px; margin-bottom: 20px; border: 1px solid rgba(255, 255, 255, 0.1); }}
+        .filter-title {{ font-weight: bold; margin-bottom: 15px; font-size: 1.1rem; }}
+        .filter-row {{ display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 15px; align-items: flex-end; }}
+        .filter-group {{ flex: 1; min-width: 200px; }}
+        .filter-group label {{ display: block; margin-bottom: 8px; font-weight: 500; opacity: 0.9; }}
+        .filter-input {{ width: 100%; padding: 10px 12px; background-color: #1f2833; color: #e0e1dd; border: 1px solid #4361ee; border-radius: 4px; font-size: 1rem; transition: all 0.2s; }}
+        .filter-input:focus {{ outline: none; border-color: #4895ef; box-shadow: 0 0 0 2px rgba(67, 97, 238, 0.3); }}
+        .filter-btn {{ background-color: #4361ee; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: 600; transition: background-color 0.2s; display: flex; align-items: center; gap: 8px; }}
+        .filter-btn:hover {{ background-color: #4895ef; }}
+        .tooltip {{ position: relative; display: inline-block; cursor: help; }}
+        .tooltip .tooltiptext {{ visibility: hidden; width: 200px; background-color: #1f2833; color: #e0e1dd; text-align: center; border-radius: 6px; padding: 10px; position: absolute; z-index: 1; bottom: 125%; left: 50%; margin-left: -100px; opacity: 0; transition: opacity 0.3s; font-size: 0.9rem; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3); border: 1px solid #4361ee; }}
+        .tooltip:hover .tooltiptext {{ visibility: visible; opacity: 1; }}
+        .badge {{ display: inline-block; padding: 4px 8px; font-size: 0.75rem; font-weight: 600; line-height: 1; text-align: center; white-space: nowrap; vertical-align: baseline; border-radius: 10px; margin-left: 5px; }}
+        .badge-primary {{ background-color: #4361ee; color: white; }}
+        .badge-danger {{ background-color: #f72585; color: white; }}
+        .badge-warning {{ background-color: #f9c74f; color: black; }}
+        .badge-success {{ background-color: #4cc9f0; color: white; }}
+        .badge-info {{ background-color: #4895ef; color: white; }}
+        .badge-secondary {{ background-color: #555555; color: white; }}
+        .modal {{ display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.7); opacity: 0; transition: opacity 0.3s; }}
+        .modal.show {{ display: block; opacity: 1; }}
+        .modal-content {{ background-color: #1f2833; margin: 10% auto; padding: 20px; border-radius: 8px; max-width: 500px; box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5); transform: translateY(-20px); transition: transform 0.3s; }}
+        .modal.show .modal-content {{ transform: translateY(0); }}
+        .modal-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }}
+        .modal-title {{ font-size: 1.2rem; font-weight: bold; color: #e0e1dd; }}
+        .close-modal {{ background: none; border: none; font-size: 1.5rem; color: #e0e1dd; cursor: pointer; transition: color 0.2s; }}
+        .close-modal:hover {{ color: #f72585; }}
+        .modal-body {{ margin-bottom: 20px; }}
+        .modal-footer {{ display: flex; justify-content: flex-end; gap: 10px; }}
+        @media (max-width: 768px) {{
+            .container {{ width: 100%; padding: 10px; }}
+            .col {{ flex: 100%; padding: 0 10px; }}
+            .card-header {{ flex-direction: column; align-items: stretch; }}
+            .card-header .actions {{ margin-top: 10px; }}
+            .filter-group {{ flex: 100%; }}
+        }}
     </style>
 </head>
 <body>
@@ -667,11 +672,13 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
                             <th>Type</th>
                             <th>Detection %</th>
                             <th>Severity</th>
-                            <th>Detections</th>
                             <th>MS Defender</th>
+                            <th>Detection Names</th>
+                            <th>VT Link</th>
+                            <th>Detection Ratio</th>
                             <th>Category</th>
                             <th>Last Analysis</th>
-                            <th>VT Link</th>
+                            <th>Details</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -757,11 +764,11 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
             if (typeof Plotly !== 'undefined') {
                 console.log("Redrawing charts...");
                 document.querySelectorAll('.plotly-graph-div').forEach(function(plot) {
-                    Plotly.relayout(plot, {
+                    Plotly.relayout(plot, {{
                         'autosize': true,
                         'paper_bgcolor': 'rgba(0,0,0,0)',
                         'plot_bgcolor': 'rgba(0,0,0,0)'
-                    });
+                    }});
                 });
             }
         }, 500);
@@ -871,7 +878,7 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
                     return;
                 }
                 
-                let iocList = []; // Properly defined here
+                let iocList = []; // Define it here properly
                 rows.forEach(row => {
                     // Only copy visible rows (respect filters)
                     if (row.style.display !== 'none') {
@@ -889,7 +896,7 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
                 
                 const iocText = iocList.join('\\n');
                 copyToClipboard(iocText);
-                showNotification(`Copied ${iocList.length} IOCs to clipboard!`);
+                showNotification(`Copied ${{iocList.length}} IOCs to clipboard!`);
             } catch (err) {
                 console.error('Error copying table content:', err);
                 showNotification('Error copying IOCs', 'danger');
@@ -924,35 +931,35 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
                 });
                 
                 // Create and download file
-                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const blob = new Blob([csvContent], {{ type: 'text/csv;charset=utf-8;' }});
                 const link = document.createElement('a');
                 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
                 
-                if (navigator.msSaveBlob) { // IE 10+
-                    navigator.msSaveBlob(blob, `vt_report_${timestamp}.csv`);
-                } else {
+                if (navigator.msSaveBlob) {{ // IE 10+
+                    navigator.msSaveBlob(blob, `vt_report_${{timestamp}}.csv`);
+                }} else {{
                     const url = URL.createObjectURL(blob);
                     link.href = url;
-                    link.download = `vt_report_${timestamp}.csv`;
+                    link.download = `vt_report_${{timestamp}}.csv`;
                     document.body.appendChild(link);
                     link.click();
                     document.body.removeChild(link);
                     setTimeout(() => URL.revokeObjectURL(url), 100);
-                }
+                }}
                 
                 showNotification('CSV file exported successfully!');
-            } catch (err) {
+            }} catch (err) {{
                 console.error('Error exporting CSV:', err);
                 showNotification('Error exporting CSV file', 'danger');
-            }
-        }
+            }}
+        }}
         
         // Apply filters on page load with a slight delay
         setTimeout(applyFilters, 500);
         
-        function applyFilters() {
+        function applyFilters() {{
             console.log("Applying filters...");
-            try {
+            try {{
                 // Show loading indicator
                 showFilteringStatus(true);
                 
@@ -961,16 +968,16 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
                 const msDetection = msDetectionFilter ? msDetectionFilter.value : 'all';
                 const searchText = searchInput ? searchInput.value.toLowerCase() : '';
                 
-                console.log("Filter values:", { iocType, severity, msDetection, searchText });
+                console.log("Filter values:", {{ iocType, severity, msDetection, searchText }});
                 
                 // Function to filter a table
-                function filterTable(table) {
+                function filterTable(table) {{
                     if (!table) return 0;
                     
                     const rows = table.querySelectorAll('tbody tr');
                     let visibleCount = 0;
                     
-                    rows.forEach(row => {
+                    rows.forEach(row => {{
                         let showRow = true;
                         
                         const rowIocType = row.getAttribute('data-ioc-type');
@@ -978,35 +985,35 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
                         const rowMsDetection = row.getAttribute('data-ms-detection');
                         
                         // Check IOC type filter
-                        if (iocType !== 'all' && rowIocType !== iocType) {
+                        if (iocType !== 'all' && rowIocType !== iocType) {{
                             showRow = false;
-                        }
+                        }}
                         
                         // Check severity filter
-                        if (severity !== 'all' && rowSeverity !== severity) {
+                        if (severity !== 'all' && rowSeverity !== severity) {{
                             showRow = false;
-                        }
+                        }}
                         
                         // Check MS detection filter
-                        if (msDetection !== 'all' && rowMsDetection !== msDetection) {
+                        if (msDetection !== 'all' && rowMsDetection !== msDetection) {{
                             showRow = false;
-                        }
+                        }}
                         
                         // Check search text
-                        if (searchText) {
+                        if (searchText) {{
                             const rowText = row.textContent.toLowerCase();
-                            if (!rowText.includes(searchText)) {
+                            if (!rowText.includes(searchText)) {{
                                 showRow = false;
-                            }
-                        }
+                            }}
+                        }}
                         
                         // Show or hide the row
                         row.style.display = showRow ? '' : 'none';
                         if (showRow) visibleCount++;
-                    });
+                    }});
                     
                     return visibleCount;
-                }
+                }}
                 
                 // Apply filters to all tables
                 const resultsCount = filterTable(resultsTable);
@@ -1014,47 +1021,47 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
                 const msDetectionCount = filterTable(msDetectionTable);
                 const msUnknownCount = filterTable(msUnknownTable);
                 
-                console.log("Filtered counts:", { 
+                console.log("Filtered counts:", {{ 
                     results: resultsCount, 
                     critical: criticalCount, 
                     msDetection: msDetectionCount,
                     msUnknown: msUnknownCount
-                });
+                }});
                 
                 // Update the filter status
-                setTimeout(() => {
+                setTimeout(() => {{
                     showFilteringStatus(false);
-                    updateFilterStatus({
+                    updateFilterStatus({{
                         results: resultsCount,
                         critical: criticalCount,
                         msDetection: msDetectionCount,
                         msUnknown: msUnknownCount
-                    });
-                }, 300);
+                    }});
+                }}, 300);
                 
-            } catch (err) {
+            }} catch (err) {{
                 console.error("Error applying filters:", err);
                 showFilteringStatus(false);
                 showNotification('Error applying filters', 'danger');
-            }
-        }
+            }}
+        }}
         
         // Show filtering status
-        function showFilteringStatus(isFiltering) {
+        function showFilteringStatus(isFiltering) {{
             const filterBtn = document.getElementById('apply-filters-btn');
-            if (filterBtn) {
-                if (isFiltering) {
+            if (filterBtn) {{
+                if (isFiltering) {{
                     filterBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Filtering...';
                     filterBtn.disabled = true;
-                } else {
+                }} else {{
                     filterBtn.innerHTML = '<i class="fas fa-filter"></i> Apply Filters';
                     filterBtn.disabled = false;
-                }
-            }
-        }
+                }}
+            }}
+        }}
         
         // Update filter status in the UI
-        function updateFilterStatus(counts) {
+        function updateFilterStatus(counts) {{
             // Update results count in badge
             const resultsBadge = document.querySelector('#results-table')?.closest('.card')?.querySelector('.badge');
             if (resultsBadge) resultsBadge.textContent = counts.results;
@@ -1070,10 +1077,10 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
             // Update MS unknown count
             const msUnknownBadge = document.querySelector('#ms-unknown-table')?.closest('.card')?.querySelector('.badge');
             if (msUnknownBadge) msUnknownBadge.textContent = counts.msUnknown;
-        }
+        }}
         
         // Make sure tables have equal column widths
-        function alignTableColumns() {
+        function alignTableColumns() {{
             if (!resultsTable) return;
             
             const tables = [
@@ -1087,15 +1094,15 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
             const columnWidths = mainTableHeaders.map(th => th.offsetWidth);
             
             // Apply to other tables
-            tables.forEach(table => {
+            tables.forEach(table => {{
                 const headers = Array.from(table.querySelectorAll('th'));
-                headers.forEach((th, index) => {
-                    if (index < columnWidths.length) {
+                headers.forEach((th, index) => {{
+                    if (index < columnWidths.length) {{
                         th.style.width = columnWidths[index] + 'px';
-                    }
-                });
-            });
-        }
+                    }}
+                }});
+            }});
+        }}
         
         // Align table columns after a short delay
         setTimeout(alignTableColumns, 1000);
@@ -1104,12 +1111,12 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
         window.addEventListener('resize', alignTableColumns);
         
         // Close modal on click outside
-        window.addEventListener('click', function(event) {
-            if (event.target === exportModal) {
+        window.addEventListener('click', function(event) {{
+            if (event.target === exportModal) {{
                 exportModal.classList.remove('show');
-            }
-        });
-    });
+            }}
+        }});
+    }});
 </script>
 </body>
 </html>
