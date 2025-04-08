@@ -7,7 +7,7 @@ with an interactive HTML report for visualizing results, optimized for both Stan
 and Premium API usage.
 
 Authors: VT Scanner Team
-Version: 1.2.0
+Version: 1.2.1
 """
 
 import base64
@@ -223,6 +223,18 @@ class IOCHelper:
         
         ioc = ioc.strip().strip('"\'')
         
+        # File Hash (MD5, SHA1, SHA256, SHA512) - Check first as it's most specific
+        hash_patterns = {
+            'md5': re.compile(r'^[a-fA-F0-9]{32}$'),
+            'sha1': re.compile(r'^[a-fA-F0-9]{40}$'),
+            'sha256': re.compile(r'^[a-fA-F0-9]{64}$'),
+            'sha512': re.compile(r'^[a-fA-F0-9]{128}$')
+        }
+        
+        for hash_type, pattern in hash_patterns.items():
+            if pattern.match(ioc):
+                return "hash"
+        
         # IPv4 address - more reliable check
         ipv4_pattern = re.compile(r'^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$')
         if ipv4_pattern.match(ioc):
@@ -254,10 +266,10 @@ class IOCHelper:
         if domain_pattern.match(ioc):
             return "domain"
         
-        # Hash (MD5, SHA1, SHA256, SHA512)
-        hash_pattern = re.compile(r'^[a-fA-F0-9]{32}$|^[a-fA-F0-9]{40}$|^[a-fA-F0-9]{64}$|^[a-fA-F0-9]{128}$')
-        if hash_pattern.match(ioc):
-            return "hash"
+        # If none of the specific types match, check for common hash-like patterns 
+        # that might be unsupported or custom hash formats
+        if re.match(r'^[a-fA-F0-9]{24,}$', ioc):
+            return "hash"  # Assume it's some kind of hash if all hex and longer than 24 chars
         
         return "unknown"
 
@@ -291,6 +303,22 @@ class IOCHelper:
         """
         normalized_url = IOCHelper.normalize_url(url)
         return base64.urlsafe_b64encode(normalized_url.encode()).decode().rstrip('=')
+    
+    @staticmethod
+    def format_category_display(category: str, ioc_type: str) -> str:
+        """
+        Format category for better display.
+        
+        Args:
+            category: Original category from VT
+            ioc_type: Type of IOC
+            
+        Returns:
+            Formatted category string
+        """
+        if category == "type-unsupported" and ioc_type == "hash":
+            return "Hash File (detailed categorization not available)"
+        return category or ""
 
 
 class VirusTotalScanner:
@@ -315,7 +343,7 @@ class VirusTotalScanner:
         self.session.headers.update({
             "x-apikey": api_key,
             "Accept": "application/json",
-            "User-Agent": f"VTScanner/1.2.0 ({scan_mode})"
+            "User-Agent": f"VTScanner/1.2.1 ({scan_mode})"
         })
         self.session.verify = False  # Disable SSL verification
         self.base_url = "https://www.virustotal.com/api/v3"
@@ -529,7 +557,8 @@ class VirusTotalScanner:
                         "vt_total": 0,
                         "vt_detection_ratio": "0/0",
                         "vt_detection_percentage": 0,
-                        "ms_defender": "unknown"
+                        "ms_defender": "unknown",
+                        "category": "Not found"  # Add category for not found items
                     }
                     
                 response.raise_for_status()
@@ -557,7 +586,8 @@ class VirusTotalScanner:
                         "vt_total": 0,
                         "vt_detection_ratio": "0/0",
                         "vt_detection_percentage": 0,
-                        "ms_defender": "unknown"
+                        "ms_defender": "unknown",
+                        "category": "Error"  # Add category for error items
                     }
 
     def _has_microsoft_detection(self, results: Dict) -> bool:
@@ -640,11 +670,19 @@ class VirusTotalScanner:
             if not category and attributes.get("category"):
                 category = attributes.get("category")
         
-        # Get more details for files
+        # For files, use the type_tag or type_description from attributes
+        # This handles "type-unsupported" better
         file_type = ""
         file_size = ""
         if ioc_type == "hash":
-            file_type = attributes.get("type_description", "")
+            # Check for type_tag first, then type_description, then category
+            file_type = attributes.get("type_tag", "")
+            if not file_type:
+                file_type = attributes.get("type_description", "")
+            
+            # Use the category value (which may be "type-unsupported")
+            if not category and attributes.get("category"):
+                category = attributes.get("category")
             file_size = attributes.get("size", 0)
             
         # Check if Microsoft Defender detected it
@@ -660,17 +698,17 @@ class VirusTotalScanner:
             # Sort engines by reputation (malicious first, then suspicious)
             sorted_engines = []
             for engine, engine_result in last_analysis_results.items():
-                category = "unknown"
+                category_value = "unknown"
                 if isinstance(engine_result, dict):
-                    category = engine_result.get("category", "unknown")
+                    category_value = engine_result.get("category", "unknown")
                 result_value = ""
                 if isinstance(engine_result, dict):
                     result_value = engine_result.get("result", "")
                 elif isinstance(engine_result, str):
                     result_value = engine_result
                     
-                if category in ["malicious", "suspicious"] or (category == "unknown" and result_value):
-                    priority = 1 if category == "malicious" else 2
+                if category_value in ["malicious", "suspicious"] or (category_value == "unknown" and result_value):
+                    priority = 1 if category_value == "malicious" else 2
                     sorted_engines.append((priority, engine, result_value))
             
             # Sort by priority and get top detections
@@ -700,6 +738,12 @@ class VirusTotalScanner:
             
             self.print_detection_bar(malicious + suspicious, total)
         
+        # If the category is "type-unsupported", format it for display
+        if category == "type-unsupported" and ioc_type == "hash":
+            display_category = IOCHelper.format_category_display(category, ioc_type)
+        else:
+            display_category = category
+        
         # Build enhanced result object
         result = {
             "ioc": original_ioc,  # Use original for display
@@ -715,6 +759,7 @@ class VirusTotalScanner:
             "vt_link": vt_link,
             "vt_last_analysis_date": last_analysis_date,
             "category": category,
+            "category_display": display_category,  # Add formatted category for display
             "file_type": file_type,
             "file_size": file_size,
             "detection_names": "; ".join(detection_names),
@@ -831,7 +876,7 @@ class VirusTotalScanner:
                 # CSV file
                 try:
                     # Try with pandas first for better handling
-                    df = pd.read_csv(file_path, encoding='utf-8', error_bad_lines=False, warn_bad_lines=True)
+                    df = pd.read_csv(file_path, encoding='utf-8', on_bad_lines='warn')
                     # Look for columns that might contain IOCs
                     potential_ioc_cols = []
                     for col in df.columns:
@@ -898,13 +943,18 @@ class VirusTotalScanner:
         return results
 
     def _export_to_csv(self, results: List[Dict], output_path: Path) -> None:
-        """Export results to CSV file."""
+        """Export results to CSV file with improved error handling."""
         # Convert to DataFrame for easier processing
         try:
             # Make a copy of results without the raw analysis results
             export_results = []
             for result in results:
                 result_copy = {k: v for k, v in result.items() if k != 'last_analysis_results'}
+                
+                # Handle type-unsupported category for better display in CSV
+                if result_copy.get('category') == 'type-unsupported':
+                    result_copy['category_note'] = 'File hash (detailed categorization not available)'
+                
                 export_results.append(result_copy)
                 
             self.dataframe = pd.DataFrame(export_results)
@@ -913,12 +963,33 @@ class VirusTotalScanner:
             if 'vt_detection_percentage' in self.dataframe.columns:
                 self.dataframe['vt_detection_percentage'] = pd.to_numeric(
                     self.dataframe['vt_detection_percentage'], errors='coerce')
-                
+                    
             # Save to CSV
-            self.dataframe.to_csv(output_path, index=False)
+            self.dataframe.to_csv(output_path, index=False, encoding='utf-8-sig')  # Use UTF-8 with BOM for Excel compatibility
             print(f"\n{GREEN}Results exported to CSV: {output_path}{RESET}")
         except Exception as e:
             print(f"{RED}Error exporting to CSV: {str(e)}{RESET}")
+            # Try a simplified export if the first attempt fails
+            try:
+                # Create a simplified dataframe with just the most important columns
+                simple_results = []
+                for result in results:
+                    simple_result = {
+                        'ioc': result.get('ioc', ''),
+                        'ioc_type': result.get('ioc_type', ''),
+                        'detection_percentage': result.get('vt_detection_percentage', 0),
+                        'severity': 'Critical' if result.get('vt_detection_percentage', 0) > 50 else 
+                                  'High' if result.get('vt_detection_percentage', 0) > 25 else
+                                  'Medium' if result.get('vt_detection_percentage', 0) > 0 else 'Clean',
+                        'ms_defender': result.get('ms_defender', 'unknown'),
+                        'error': result.get('error', '')
+                    }
+                    simple_results.append(simple_result)
+                    
+                pd.DataFrame(simple_results).to_csv(output_path, index=False)
+                print(f"{YELLOW}Simplified CSV export created due to errors with full export.{RESET}")
+            except Exception as e2:
+                print(f"{RED}Failed to create simplified CSV export: {str(e2)}{RESET}")
     
     def generate_html_report(self, input_filename: str, output_path: Optional[str] = None) -> Optional[str]:
         """
@@ -947,7 +1018,11 @@ class VirusTotalScanner:
                         # Don't include raw analysis results to avoid issues
                         continue
                     elif isinstance(value, (str, int, float, bool)) or value is None:
-                        sanitized[key] = value
+                        # For "type-unsupported" category, include the display version
+                        if key == 'category' and value == 'type-unsupported' and result.get('ioc_type') == 'hash':
+                            sanitized[key] = 'Hash File'
+                        else:
+                            sanitized[key] = value
                     else:
                         # Convert complex objects to string representation
                         sanitized[key] = str(value)
@@ -959,10 +1034,12 @@ class VirusTotalScanner:
                 'malicious_count': self.malicious_count,
                 'suspicious_count': self.suspicious_count,
                 'error_count': self.error_count,
+                'clean_count': self.total_iocs - self.malicious_count - self.suspicious_count - self.error_count,
                 'critical_count': self.critical_count,
                 'scan_start_time': self.scan_start_time,
                 'total_engines': self.total_engines,
-                'ms_known_count': self.ms_known_count
+                'ms_known_count': self.ms_known_count,
+                'ms_unknown_count': self.total_iocs - self.ms_known_count
             }
             
             # Generate HTML report using the optimized report generator
@@ -1011,7 +1088,7 @@ class VirusTotalBatchScanner:
         self.session.headers.update({
             "x-apikey": api_key,
             "Accept": "application/json",
-            "User-Agent": "VTBatchScanner/1.2.0 (Premium)"
+            "User-Agent": "VTBatchScanner/1.2.1 (Premium)"
         })
         self.session.verify = False
         self.base_url = "https://www.virustotal.com/api/v3"
@@ -1192,7 +1269,7 @@ def main():
             
         # Check for version flag
         if sys.argv[1].lower() in ['--version', '-v']:
-            print("\nVirusTotal IOC Scanner v1.2.0")
+            print("\nVirusTotal IOC Scanner v1.2.1")
             print("Copyright (c) 2025 VT Scanner Team")
             sys.exit(0)
             
