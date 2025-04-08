@@ -1,12 +1,11 @@
 """
-VirusTotal IOC Scanner HTML Report Generator
+VirusTotal IOC Scanner HTML Report Generator with Timeline Analysis
 
-This module handles the generation of HTML reports for the VirusTotal IOC Scanner.
-It includes functionality for creating interactive visualizations, severity indicators,
-copy functionality for IOCs, and a responsive HTML template with filtering capabilities.
+This module handles the generation of HTML reports for the VirusTotal IOC Scanner,
+with enhanced timeline visualizations to analyze threat evolution over time.
 
 Author: VT Scanner Team
-Version: 1.2.2
+Version: 1.3.1
 """
 
 import os
@@ -19,7 +18,9 @@ from typing import Dict, List, Optional, Union, Any, Tuple
 
 try:
     import pandas as pd
+    import numpy as np
     import plotly.express as px
+    import plotly.graph_objects as go
     import plotly.io as pio
 except ImportError:
     print("Missing required packages. Please install with: pip install pandas plotly")
@@ -104,25 +105,25 @@ def get_ms_defender_span(status: str) -> str:
         return '<span class="ms-known"><i class="fas fa-shield-alt"></i> known</span>'
     return '<span class="ms-unknown"><i class="fas fa-question-circle"></i> unknown</span>'
 
-def has_microsoft_detection(detection_string: str) -> bool:
-    """Check if a detection string contains Microsoft detection information"""
-    if not detection_string or not isinstance(detection_string, str):
-        return False
-    
-    microsoft_patterns = [
-        'microsoft:', 'microsoft/', 'trojan:win32', 'trojan.win32', 'microsoft ',
-        'ms defender', 'msdefender', 'msft', 'defender:', 'defender.', 'windows defender'
-    ]
-    
-    detection_lower = detection_string.lower()
-    return any(pattern in detection_lower for pattern in microsoft_patterns)
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles datetime and pandas objects"""
+    def default(self, obj):
+        if isinstance(obj, (pd.Timestamp, datetime)):
+            return obj.isoformat()
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
 
 def process_data(results_list: List[Dict]) -> Tuple[pd.DataFrame, Dict, Dict]:
-    """Process and sanitize data, returning the dataframe and aggregated counts"""
+    """Process and sanitize data for report generation"""
     # Process and sanitize data
     results_list_copy = [{k: sanitize_for_html(v) if isinstance(v, str) else v 
-                          for k, v in result.items() if k != 'last_analysis_results'} 
-                         for result in results_list]
+                        for k, v in result.items() if k != 'last_analysis_results'} 
+                        for result in results_list]
     
     df = pd.DataFrame(results_list_copy)
     
@@ -130,46 +131,38 @@ def process_data(results_list: List[Dict]) -> Tuple[pd.DataFrame, Dict, Dict]:
     if 'vt_detection_percentage' in df.columns:
         df['vt_detection_percentage'] = pd.to_numeric(df['vt_detection_percentage'], errors='coerce').round(1)
     
-    # Determine severity based on detection percentage
-    def get_severity(row):
-        if pd.notna(row.get("error")) and row.get("error"):
-            return "Error"
-        if "vt_detection_percentage" not in row or pd.isna(row["vt_detection_percentage"]):
-            return "Error"
-        if row["vt_detection_percentage"] > 50: 
-            return "Critical"
-        if row["vt_detection_percentage"] > 25: 
-            return "High"
-        if row["vt_detection_percentage"] > 0: 
-            return "Medium"
-        return "Clean"
+    # Process date columns for timeline visualization
+    date_columns = ['vt_last_analysis_date', 'vt_first_submission_date', 'vt_last_submission_date']
     
-    # Add severity if not present
+    for col in date_columns:
+        if col in df.columns:
+            try:
+                # Try to convert to datetime format
+                df[f'{col}_dt'] = pd.to_datetime(df[col], errors='coerce')
+            except Exception as e:
+                logger.warning(f"Could not convert {col} to datetime: {e}")
+    
+    # Ensure severity is set correctly
     if 'severity' not in df.columns:
-        df["severity"] = df.apply(get_severity, axis=1)
+        def get_severity(row):
+            if pd.notna(row.get("error")) and row.get("error"):
+                return "Error"
+            if "vt_detection_percentage" not in row or pd.isna(row["vt_detection_percentage"]):
+                return "Error"
+            if row["vt_detection_percentage"] > 50: 
+                return "Critical"
+            if row["vt_detection_percentage"] > 25: 
+                return "High"
+            if row["vt_detection_percentage"] > 0: 
+                return "Medium"
+            return "Clean"
         
-    # Ensure category is properly handled
-    if 'category' in df.columns:
-        df['category'] = df['category'].fillna('')
-        # Check for category_display which might be more user-friendly
-        if 'category_display' in df.columns:
-            df['category'] = df.apply(lambda r: r['category_display'] if pd.notna(r.get('category_display')) and r['category_display'] else r['category'], axis=1)
+        df["severity"] = df.apply(get_severity, axis=1)
     
+    # Fill NaN values
     df = df.fillna("N/A")
     
-    # Extract Microsoft Defender status
-    def get_ms_defender_status(row):
-        if 'ms_defender' in row and row['ms_defender'] in ['known', 'unknown']:
-            return row['ms_defender']
-        if 'detection_names' in row and isinstance(row['detection_names'], str):
-            if has_microsoft_detection(row['detection_names']):
-                return 'known'
-        return 'unknown'
-    
-    if 'ms_defender' not in df.columns:
-        df["ms_defender"] = df.apply(get_ms_defender_status, axis=1)
-    
-    # Prepare summary data for charts
+    # Calculate counts for charts
     severity_counts = df["severity"].value_counts().reset_index()
     severity_counts.columns = ["Severity", "Count"]
     
@@ -199,7 +192,7 @@ def create_chart(data_df: pd.DataFrame, chart_type: str, **kwargs) -> str:
                 paper_bgcolor='rgba(0,0,0,0)', 
                 plot_bgcolor='rgba(0,0,0,0)',
                 margin=dict(l=20, r=20, t=30, b=20), 
-                height=280,  # Smaller height 
+                height=280,
                 showlegend=True,
                 title=title,
                 legend=dict(font=dict(size=11), orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
@@ -214,6 +207,249 @@ def create_chart(data_df: pd.DataFrame, chart_type: str, **kwargs) -> str:
     except Exception as e:
         logger.error(f"Error creating chart: {e}")
         return f"<div class='error-msg'>Error creating chart: {str(e)}</div>"
+
+def create_timeline_chart(df: pd.DataFrame) -> str:
+    """Create a timeline visualization showing IOC detections over time"""
+    try:
+        # Check for valid date columns
+        date_columns = ['vt_last_analysis_date_dt', 'vt_first_submission_date_dt']
+        valid_date_col = None
+        
+        for col in date_columns:
+            if col in df.columns and pd.to_datetime(df[col], errors='coerce').notna().any():
+                valid_date_col = col
+                break
+        
+        if not valid_date_col:
+            return "<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> Timeline analysis unavailable due to missing date information</div>"
+        
+        # Create a copy of the dataframe with only valid dates
+        timeline_df = df.copy()
+        timeline_df['date'] = pd.to_datetime(timeline_df[valid_date_col], errors='coerce')
+        timeline_df = timeline_df[timeline_df['date'].notna()]
+        
+        if len(timeline_df) == 0:
+            return "<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> No valid timeline data available</div>"
+        
+        # Extract date for grouping
+        timeline_df['date'] = timeline_df['date'].dt.date
+        
+        # Group by date and severity
+        severity_pivot = pd.pivot_table(
+            timeline_df, 
+            index='date',
+            columns='severity', 
+            values='ioc',
+            aggfunc='count',
+            fill_value=0
+        ).reset_index()
+        
+        # Ensure all severity levels are present
+        for severity in ['Critical', 'High', 'Medium', 'Clean', 'Error']:
+            if severity not in severity_pivot.columns:
+                severity_pivot[severity] = 0
+        
+        # Calculate daily total
+        severity_pivot['Total'] = severity_pivot[['Critical', 'High', 'Medium', 'Clean', 'Error']].sum(axis=1)
+        
+        # Create the stacked area chart
+        fig = go.Figure()
+        
+        # Add traces in specific order (most severe first)
+        for severity, color in [
+            ('Critical', SEVERITY_COLORS['Critical']),
+            ('High', SEVERITY_COLORS['High']),
+            ('Medium', SEVERITY_COLORS['Medium']),
+            ('Clean', SEVERITY_COLORS['Clean']),
+            ('Error', SEVERITY_COLORS['Error'])
+        ]:
+            if severity in severity_pivot.columns:
+                fig.add_trace(go.Scatter(
+                    x=severity_pivot['date'], 
+                    y=severity_pivot[severity],
+                    mode='lines',
+                    stackgroup='one',
+                    name=severity,
+                    line=dict(width=0.5, color=color),
+                    fillcolor=color
+                ))
+        
+        # Add total line
+        fig.add_trace(go.Scatter(
+            x=severity_pivot['date'],
+            y=severity_pivot['Total'],
+            mode='lines',
+            name='Total',
+            line=dict(color='white', width=2, dash='dot')
+        ))
+            
+        fig.update_layout(
+            title="IOC Detection Timeline",
+            template='plotly_dark',
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=20, r=20, t=40, b=40),
+            height=300,
+            yaxis_title="Number of IOCs",
+            xaxis_title="Date",
+            legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+            hovermode="x unified"
+        )
+        
+        return pio.to_html(fig, full_html=False, include_plotlyjs=False, config={'displayModeBar': False, 'responsive': True})
+    
+    except Exception as e:
+        logger.error(f"Error creating timeline chart: {e}")
+        return f"<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> Could not create timeline chart: {str(e)}</div>"
+
+def create_ioc_type_timeline(df: pd.DataFrame) -> str:
+    """Create a timeline showing IOC types over time"""
+    try:
+        # Check for valid date columns
+        date_columns = ['vt_last_analysis_date_dt', 'vt_first_submission_date_dt']
+        valid_date_col = None
+        
+        for col in date_columns:
+            if col in df.columns and pd.to_datetime(df[col], errors='coerce').notna().any():
+                valid_date_col = col
+                break
+        
+        if not valid_date_col:
+            return "<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> IOC type timeline unavailable due to missing date information</div>"
+        
+        # Create a copy of the dataframe with only valid dates
+        timeline_df = df.copy()
+        timeline_df['date'] = pd.to_datetime(timeline_df[valid_date_col], errors='coerce')
+        timeline_df = timeline_df[timeline_df['date'].notna()]
+        
+        if len(timeline_df) == 0:
+            return "<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> No valid IOC type timeline data available</div>"
+        
+        # Extract date for grouping
+        timeline_df['date'] = timeline_df['date'].dt.date
+        
+        # Create a pivot table of IOC types over time
+        ioc_pivot = pd.pivot_table(
+            timeline_df, 
+            index='date',
+            columns='ioc_type', 
+            values='ioc',
+            aggfunc='count',
+            fill_value=0
+        ).reset_index()
+        
+        # Get ioc types for creating bar chart
+        ioc_types = [col for col in ioc_pivot.columns if col != 'date']
+        
+        # Create color map for IOC types
+        color_map = {
+            'hash': '#4cc9f0',
+            'ip': '#f72585',
+            'domain': '#4361ee',
+            'url': '#f9c74f',
+            'email': '#43aa8b'
+        }
+        
+        # Create the grouped bar chart
+        fig = go.Figure()
+        
+        # Add a trace for each IOC type
+        for ioc_type in ioc_types:
+            fig.add_trace(go.Bar(
+                x=ioc_pivot['date'],
+                y=ioc_pivot[ioc_type],
+                name=ioc_type,
+                marker_color=color_map.get(ioc_type, '#555555')
+            ))
+            
+        fig.update_layout(
+            title="IOC Types Over Time",
+            template='plotly_dark',
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=20, r=20, t=40, b=40),
+            height=300,
+            yaxis_title="Number of IOCs",
+            xaxis_title="Date",
+            legend_title="IOC Type",
+            legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+            hovermode="closest",
+            barmode='group'
+        )
+        
+        return pio.to_html(fig, full_html=False, include_plotlyjs=False, config={'displayModeBar': False, 'responsive': True})
+    
+    except Exception as e:
+        logger.error(f"Error creating IOC type timeline: {e}")
+        return f"<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> Could not create IOC type chart: {str(e)}</div>"
+
+def create_detection_heatmap(df: pd.DataFrame) -> str:
+    """Create a heatmap showing detection percentages over time"""
+    try:
+        # Check for valid date and detection percentage data
+        if 'vt_last_analysis_date_dt' not in df.columns or 'vt_detection_percentage' not in df.columns:
+            return "<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> Detection heatmap unavailable due to missing data</div>"
+        
+        # Create a copy with only valid data
+        heatmap_df = df.copy()
+        heatmap_df['date'] = pd.to_datetime(heatmap_df['vt_last_analysis_date_dt'], errors='coerce')
+        heatmap_df = heatmap_df[heatmap_df['date'].notna()]
+        
+        # Convert detection percentage to numeric
+        heatmap_df['detection'] = pd.to_numeric(heatmap_df['vt_detection_percentage'], errors='coerce')
+        heatmap_df = heatmap_df[heatmap_df['detection'].notna()]
+        
+        if len(heatmap_df) == 0:
+            return "<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> No valid detection data available for heatmap</div>"
+        
+        # Get day of week
+        heatmap_df['day_of_week'] = heatmap_df['date'].dt.day_name()
+        heatmap_df['date'] = heatmap_df['date'].dt.date
+        
+        # Calculate average detection by date and day of week
+        avg_detection = heatmap_df.groupby(['date', 'day_of_week'])['detection'].mean().reset_index()
+        
+        # Sort by proper day order
+        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        
+        # Map days to integers for sorting
+        day_map = {day: i for i, day in enumerate(day_order)}
+        avg_detection['day_num'] = avg_detection['day_of_week'].map(day_map)
+        avg_detection = avg_detection.sort_values('day_num')
+        
+        # Create the heatmap
+        fig = px.density_heatmap(
+            avg_detection,
+            x='date',
+            y='day_of_week',
+            z='detection',
+            title="Detection Percentage Heatmap",
+            color_continuous_scale=[
+                [0, COLORS['success']],
+                [0.25, COLORS['info']],
+                [0.5, COLORS['warning']],
+                [1, COLORS['danger']]
+            ],
+            category_orders={"day_of_week": day_order}
+        )
+            
+        fig.update_layout(
+            template='plotly_dark',
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=20, r=20, t=40, b=20),
+            height=250,
+            xaxis_title="Date",
+            yaxis_title="Day of Week",
+            coloraxis_colorbar=dict(title="Detection %"),
+            hovermode="closest"
+        )
+        
+        return pio.to_html(fig, full_html=False, include_plotlyjs=False, config={'displayModeBar': False, 'responsive': True})
+    
+    except Exception as e:
+        logger.error(f"Error creating detection heatmap: {e}")
+        return f"<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> Could not create detection heatmap: {str(e)}</div>"
 
 def generate_table_row(row: pd.Series, idx: int, with_ms_defender: bool = True, with_metadata: bool = False) -> str:
     """Generate an HTML table row for displaying an IOC"""
@@ -278,7 +514,7 @@ def generate_html_report(results_list: List[Dict],
                          output_path: Optional[str] = None, 
                          input_filename: str = "IOCs") -> Optional[str]:
     """
-    Generate a static HTML report from scan results
+    Generate a static HTML report from scan results with timeline visualization
     
     Args:
         results_list: List of result dictionaries with detection information
@@ -319,7 +555,7 @@ def generate_html_report(results_list: List[Dict],
         # Create charts
         charts = {}
         
-        # Severity chart
+        # Basic distribution charts
         charts['severity_chart'] = create_chart(
             severity_counts, 
             'pie', 
@@ -330,7 +566,6 @@ def generate_html_report(results_list: List[Dict],
             title='Severity'
         )
         
-        # MS Defender chart
         charts['ms_defender_chart'] = create_chart(
             ms_defender_counts, 
             'pie', 
@@ -345,6 +580,25 @@ def generate_html_report(results_list: List[Dict],
             title='MS Defender'
         )
         
+        # Timeline charts - wrapped in try/except to ensure they don't break the report
+        try:
+            charts['detection_timeline'] = create_timeline_chart(df)
+        except Exception as e:
+            logger.error(f"Failed to generate detection timeline: {e}")
+            charts['detection_timeline'] = f"<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> Could not create timeline chart: {str(e)}</div>"
+            
+        try:
+            charts['ioc_type_timeline'] = create_ioc_type_timeline(df)
+        except Exception as e:
+            logger.error(f"Failed to generate IOC type timeline: {e}")
+            charts['ioc_type_timeline'] = f"<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> Could not create IOC type chart: {str(e)}</div>"
+            
+        try:
+            charts['detection_heatmap'] = create_detection_heatmap(df)
+        except Exception as e:
+            logger.error(f"Failed to generate detection heatmap: {e}")
+            charts['detection_heatmap'] = f"<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> Could not create detection heatmap: {str(e)}</div>"
+        
         # Filter dataframes for tables
         critical_df = df[df['severity'].isin(['Critical', 'High'])]
         ms_known_df = df[df['ms_defender'] == 'known']
@@ -353,27 +607,53 @@ def generate_html_report(results_list: List[Dict],
         # Generate table rows
         critical_rows = "".join([generate_table_row(row, idx) for idx, row in critical_df.iterrows()])
         ms_detection_rows = "".join([generate_table_row(row, idx, with_ms_defender=False) 
-                                      for idx, row in ms_known_df.iterrows()])
+                                     for idx, row in ms_known_df.iterrows()])
         ms_unknown_rows = "".join([generate_table_row(row, idx, with_ms_defender=False) 
-                                    for idx, row in ms_unknown_df.iterrows()])
+                                   for idx, row in ms_unknown_df.iterrows()])
         all_results_rows = "".join([generate_table_row(row, idx, with_ms_defender=True, with_metadata=True) 
-                                     for idx, row in df.iterrows()])
+                                    for idx, row in df.iterrows()])
         
         # Create dropdown options
         ioc_type_options = "".join([f'<option value="{ioc_type}">{ioc_type}</option>' 
-                                     for ioc_type in sorted(df['ioc_type'].unique())])
+                                   for ioc_type in sorted(df['ioc_type'].unique())])
         severity_options = "".join([f'<option value="{severity}">{severity}</option>' 
-                                     for severity in ['Critical', 'High', 'Medium', 'Clean', 'Error'] 
-                                     if severity in df['severity'].unique()])
+                                   for severity in ['Critical', 'High', 'Medium', 'Clean', 'Error'] 
+                                   if severity in df['severity'].unique()])
         
-        # Prepare export data
+        # Prepare export data - convert to serializable format
         export_data = []
         for _, row in df.iterrows():
-            export_row = {k: v for k, v in row.items() if k != 'last_analysis_results'}
+            # Convert all values to simple types for JSON
+            export_row = {}
+            for k, v in row.items():
+                if k != 'last_analysis_results':
+                    if isinstance(v, (pd.Timestamp, datetime)):
+                        export_row[k] = v.isoformat()
+                    elif isinstance(v, (np.integer, np.int64)):
+                        export_row[k] = int(v)
+                    elif isinstance(v, (np.floating, np.float64)):
+                        export_row[k] = float(v)
+                    else:
+                        export_row[k] = v
             export_data.append(export_row)
         
         # Convert to JSON for the CSV export functionality
-        csv_export_data = json.dumps(export_data)
+        try:
+            csv_export_data = json.dumps(export_data, cls=DateTimeEncoder)
+        except Exception as e:
+            logger.error(f"Error serializing data to JSON: {e}")
+            # Create a fallback version with minimal data
+            fallback_data = []
+            for item in export_data:
+                safe_item = {
+                    'ioc': item.get('ioc', ''), 
+                    'ioc_type': item.get('ioc_type', ''),
+                    'severity': item.get('severity', ''),
+                    'ms_defender': item.get('ms_defender', ''),
+                    'vt_detection_percentage': item.get('vt_detection_percentage', '')
+                }
+                fallback_data.append(safe_item)
+            csv_export_data = json.dumps(fallback_data)
         
         # Prepare template variables
         input_filename_name = sanitize_for_html(Path(input_filename).name)
@@ -385,8 +665,8 @@ def generate_html_report(results_list: List[Dict],
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="generator" content="VTScanner/1.2.2">
-    <title>VirusTotal Scan Results - {input_filename}</title>
+    <meta name="generator" content="VTScanner/1.3.1">
+    <title>VirusTotal Scan Results - {input_filename_name}</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <style>
@@ -464,6 +744,9 @@ def generate_html_report(results_list: List[Dict],
         .pagination-controls {{ display: flex; justify-content: center; margin-top: 15px; gap: 8px; }}
         .pagination-btn {{ background-color: #1f2833; color: white; border: 1px solid #4361ee; padding: 5px 10px; border-radius: 4px; cursor: pointer; }}
         .pagination-btn.active {{ background-color: #4361ee; }}
+        .alert {{ padding: 15px; margin-bottom: 20px; border-radius: 4px; }}
+        .alert-warning {{ background-color: rgba(249, 199, 79, 0.2); border-left: 4px solid #f9c74f; }}
+        #timeline-details {{ transition: all 0.3s ease; }}
         @media (max-width: 768px) {{
             .container {{ width: 100%; padding: 10px; }}
             .col {{ flex: 100%; }}
@@ -562,6 +845,66 @@ def generate_html_report(results_list: List[Dict],
                     <div class="card-body">
                         <div class="chart-container" id="ms-detection-chart">
 {charts['ms_defender_chart']}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Timeline Analysis Section -->
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <i class="fas fa-chart-line"></i> Timeline Analysis
+                </div>
+                <div class="actions">
+                    <button class="action-btn" id="toggle-timeline-btn">
+                        <i class="fas fa-expand"></i> Expand/Collapse
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="timeline-details">
+                    <div class="row">
+                        <div class="col" style="flex: 1;">
+                            <div class="card">
+                                <div class="card-header">
+                                    <i class="fas fa-calendar-alt"></i> Detection Timeline
+                                </div>
+                                <div class="card-body">
+                                    <div class="chart-container" id="detection-timeline">
+{charts['detection_timeline']}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col" style="flex: 1;">
+                            <div class="card">
+                                <div class="card-header">
+                                    <i class="fas fa-sitemap"></i> IOC Types Over Time
+                                </div>
+                                <div class="card-body">
+                                    <div class="chart-container" id="ioc-type-timeline">
+{charts['ioc_type_timeline']}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col" style="flex: 1;">
+                            <div class="card">
+                                <div class="card-header">
+                                    <i class="fas fa-fire"></i> Detection Heatmap
+                                </div>
+                                <div class="card-body">
+                                    <div class="chart-container" id="detection-heatmap">
+{charts['detection_heatmap']}
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -841,6 +1184,23 @@ document.addEventListener('DOMContentLoaded', function() {{
     const msUnknownTable = document.getElementById('ms-unknown-table');
     const applyFiltersBtn = document.getElementById('apply-filters-btn');
     const resetFiltersBtn = document.getElementById('reset-filters-btn');
+    
+    // Timeline toggle
+    const toggleTimelineBtn = document.getElementById('toggle-timeline-btn');
+    const timelineDetails = document.getElementById('timeline-details');
+    
+    if (toggleTimelineBtn && timelineDetails) {{
+        // Start with timeline expanded
+        toggleTimelineBtn.addEventListener('click', function() {{
+            if (timelineDetails.style.display === 'none') {{
+                timelineDetails.style.display = 'block';
+                toggleTimelineBtn.innerHTML = '<i class="fas fa-compress"></i> Collapse';
+            }} else {{
+                timelineDetails.style.display = 'none';
+                toggleTimelineBtn.innerHTML = '<i class="fas fa-expand"></i> Expand';
+            }}
+        }});
+    }}
     
     // Copy functionality
     const copyAllBtn = document.getElementById('copy-all-btn');
@@ -1176,15 +1536,7 @@ document.addEventListener('DOMContentLoaded', function() {{
         try:
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(html_template)
-            print(f"HTML report generated: {output_path}")
-            
-            # Try to open the report in a browser
-            try:
-                import webbrowser
-                webbrowser.open('file://' + os.path.abspath(output_path))
-            except Exception as e:
-                logger.debug(f"Could not open browser: {e}")
-                
+            logger.info(f"HTML report generated: {output_path}")
             return output_path
                 
         except Exception as e:
@@ -1195,5 +1547,4 @@ document.addEventListener('DOMContentLoaded', function() {{
         import traceback
         error_details = traceback.format_exc()
         logger.error(f"Error generating HTML report: {str(e)}\n{error_details}")
-        print(f"Error generating HTML report: {str(e)}")
         return None
