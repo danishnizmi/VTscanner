@@ -1,11 +1,11 @@
 """
-VirusTotal IOC Scanner HTML Report Generator with Timeline Analysis
+VirusTotal IOC Scanner HTML Report Generator with Simplified Timeline
 
-This module handles the generation of HTML reports for the VirusTotal IOC Scanner,
-with enhanced timeline visualizations to analyze threat evolution over time.
+This module generates HTML reports for the VirusTotal IOC Scanner with a clean,
+simplified timeline visualization showing only the total count.
 
 Author: VT Scanner Team
-Version: 1.3.1
+Version: 1.5.1
 """
 
 import os
@@ -14,7 +14,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Union, Any, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 try:
     import pandas as pd
@@ -29,30 +29,27 @@ except ImportError:
 # Setup logging
 logger = logging.getLogger(__name__)
 
-# Color palette for charts and styling
+# Color palette
 COLORS = {
-    'primary': '#4361ee', 
-    'secondary': '#555555', 
-    'success': '#4cc9f0', 
-    'info': '#4895ef', 
-    'warning': '#f9c74f', 
-    'danger': '#f72585',
-    'light': '#e0e1dd', 
-    'dark': '#1e1e1e', 
-    'background': '#0b0c10',
-    'card_bg': '#1f2833', 
-    'text': '#ffffff', 
-    'ms_known': '#e63946', 
-    'ms_unknown': '#6c757d'
+    'primary': '#4dabf7',      # Bright blue
+    'secondary': '#adb5bd',    # Medium gray
+    'success': '#40c057',      # Green
+    'info': '#228be6',         # Blue
+    'warning': '#fd7e14',      # Orange
+    'danger': '#fa5252',       # Red
+    'background': '#0f172a',   # Dark navy
+    'card_bg': '#1e293b',      # Dark blue
+    'text': '#f8f9fa',         # Light gray
+    'border': '#334155'        # Border color
 }
 
-# Severity mappings
+# Severity colors
 SEVERITY_COLORS = {
-    'Critical': COLORS['danger'], 
-    'High': COLORS['warning'],
-    'Medium': COLORS['info'], 
-    'Clean': COLORS['success'],
-    'Error': COLORS['secondary']
+    'Critical': '#fa5252',
+    'High': '#ff922b',
+    'Medium': '#339af0',
+    'Clean': '#51cf66',
+    'Error': '#adb5bd'
 }
 
 SEVERITY_BADGES = {
@@ -63,35 +60,17 @@ SEVERITY_BADGES = {
     'Error': 'badge badge-secondary'
 }
 
-def sanitize_for_html(text: Any) -> str:
-    """Safely encode a string for HTML output"""
+def sanitize_text(text: Any, for_js: bool = False) -> str:
+    """Sanitize text for HTML or JavaScript output"""
     if not isinstance(text, str):
         text = str(text)
-    return html.escape(text)
-
-def sanitize_for_js(text: Any) -> str:
-    """Safely encode a string for JavaScript use"""
-    if not isinstance(text, str):
-        text = str(text)
-    # Escape single quotes, double quotes, backslashes, and control characters
-    result = text.replace('\\', '\\\\')
-    result = result.replace("'", "\\'")
-    result = result.replace('"', '\\"')
-    result = result.replace('\n', '\\n')
-    result = result.replace('\r', '\\r')
-    result = result.replace('\t', '\\t')
-    return result
-
-def get_severity_class(severity: str) -> str:
-    """Return the CSS class for the given severity level"""
-    severity_classes = {
-        'Critical': 'severity-Critical', 
-        'High': 'severity-High',
-        'Medium': 'severity-Medium', 
-        'Clean': 'severity-Clean',
-        'Error': 'severity-Error'
-    }
-    return severity_classes.get(severity, '')
+    
+    if for_js:
+        # Escape for JavaScript
+        return text.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n')
+    else:
+        # Escape for HTML
+        return html.escape(text)
 
 def get_severity_badge(severity: str) -> str:
     """Return HTML for a severity badge"""
@@ -99,29 +78,27 @@ def get_severity_badge(severity: str) -> str:
         return ""
     return f'<span class="{SEVERITY_BADGES[severity]}">{severity}</span>'
 
-def get_ms_defender_span(status: str) -> str:
-    """Return HTML for MS Defender status"""
+def get_ms_defender_status(status: str) -> str:
+    """Return HTML for MS Defender status with icon"""
     if status == "known":
         return '<span class="ms-known"><i class="fas fa-shield-alt"></i> known</span>'
     return '<span class="ms-unknown"><i class="fas fa-question-circle"></i> unknown</span>'
 
-class DateTimeEncoder(json.JSONEncoder):
-    """Custom JSON encoder that handles datetime and pandas objects"""
-    def default(self, obj):
-        if isinstance(obj, (pd.Timestamp, datetime)):
-            return obj.isoformat()
-        if isinstance(obj, np.integer):
-            return int(obj)
-        if isinstance(obj, np.floating):
-            return float(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return super().default(obj)
+def get_ioc_type_icon(ioc_type: str) -> str:
+    """Return appropriate icon for IOC type"""
+    icons = {
+        "ip": "fa-network-wired",
+        "domain": "fa-globe",
+        "url": "fa-link",
+        "hash": "fa-file-code",
+        "email": "fa-envelope"
+    }
+    return icons.get(ioc_type, "fa-question-circle")
 
 def process_data(results_list: List[Dict]) -> Tuple[pd.DataFrame, Dict, Dict]:
     """Process and sanitize data for report generation"""
     # Process and sanitize data
-    results_list_copy = [{k: sanitize_for_html(v) if isinstance(v, str) else v 
+    results_list_copy = [{k: sanitize_text(v) if isinstance(v, str) else v 
                         for k, v in result.items() if k != 'last_analysis_results'} 
                         for result in results_list]
     
@@ -137,7 +114,6 @@ def process_data(results_list: List[Dict]) -> Tuple[pd.DataFrame, Dict, Dict]:
     for col in date_columns:
         if col in df.columns:
             try:
-                # Try to convert to datetime format
                 df[f'{col}_dt'] = pd.to_datetime(df[col], errors='coerce')
             except Exception as e:
                 logger.warning(f"Could not convert {col} to datetime: {e}")
@@ -171,45 +147,45 @@ def process_data(results_list: List[Dict]) -> Tuple[pd.DataFrame, Dict, Dict]:
     
     return df, severity_counts, ms_defender_counts
 
-def create_chart(data_df: pd.DataFrame, chart_type: str, **kwargs) -> str:
-    """Create a chart visualization based on provided data"""
+def create_pie_chart(data_df: pd.DataFrame, name_col: str, value_col: str, 
+                    color_map: Dict = None, title: str = "") -> str:
+    """Create a pie chart visualization"""
     try:
-        config = {'displayModeBar': False, 'responsive': True}
-        
-        if chart_type == 'pie':
-            names_col = kwargs.get('names', data_df.columns[0])
-            values_col = kwargs.get('values', data_df.columns[1])
-            color_col = kwargs.get('color', names_col)
-            color_map = kwargs.get('color_map', {})
-            title = kwargs.get('title', '')
+        if color_map is None:
+            color_map = {}
             
-            fig = px.pie(
-                data_df, names=names_col, values=values_col,
-                color=color_col, color_discrete_map=color_map, hole=0.4
-            )
-            fig.update_layout(
-                template='plotly_dark', 
-                paper_bgcolor='rgba(0,0,0,0)', 
-                plot_bgcolor='rgba(0,0,0,0)',
-                margin=dict(l=20, r=20, t=30, b=20), 
-                height=280,
-                showlegend=True,
-                title=title,
-                legend=dict(font=dict(size=11), orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
-                annotations=[dict(text=title, font=dict(size=15), showarrow=False)]
-            )
-        else:
-            logger.error(f"Unsupported chart type: {chart_type}")
-            return "<div>Error: Unsupported chart type</div>"
+        fig = px.pie(
+            data_df, names=name_col, values=value_col,
+            color=name_col, color_discrete_map=color_map, hole=0.4
+        )
         
-        return pio.to_html(fig, full_html=False, include_plotlyjs=False, config=config)
+        fig.update_traces(
+            textposition='inside',
+            textinfo='percent+label',
+            hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}',
+            marker=dict(line=dict(color=COLORS['background'], width=1.5))
+        )
+        
+        fig.update_layout(
+            template='plotly_dark',
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=10, r=10, t=30, b=10),
+            height=280,
+            showlegend=True,
+            title=title,
+            legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+        )
+        
+        return pio.to_html(fig, full_html=False, include_plotlyjs=False, 
+                         config={'displayModeBar': False, 'responsive': True})
     
     except Exception as e:
-        logger.error(f"Error creating chart: {e}")
-        return f"<div class='error-msg'>Error creating chart: {str(e)}</div>"
+        logger.error(f"Error creating pie chart: {e}")
+        return f"<div class='alert alert-warning'><i class='fas fa-exclamation-triangle'></i> Error creating chart: {str(e)}</div>"
 
 def create_timeline_chart(df: pd.DataFrame) -> str:
-    """Create a timeline visualization showing IOC detections over time"""
+    """Create a simplified timeline visualization showing only total IOC counts over time"""
     try:
         # Check for valid date columns
         date_columns = ['vt_last_analysis_date_dt', 'vt_first_submission_date_dt']
@@ -221,7 +197,7 @@ def create_timeline_chart(df: pd.DataFrame) -> str:
                 break
         
         if not valid_date_col:
-            return "<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> Timeline analysis unavailable due to missing date information</div>"
+            return "<div class='alert alert-warning'><i class='fas fa-exclamation-triangle'></i> Timeline analysis unavailable: No valid date information found</div>"
         
         # Create a copy of the dataframe with only valid dates
         timeline_df = df.copy()
@@ -229,241 +205,79 @@ def create_timeline_chart(df: pd.DataFrame) -> str:
         timeline_df = timeline_df[timeline_df['date'].notna()]
         
         if len(timeline_df) == 0:
-            return "<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> No valid timeline data available</div>"
+            return "<div class='alert alert-warning'><i class='fas fa-exclamation-triangle'></i> No valid timeline data available</div>"
         
-        # Extract date for grouping
+        # Extract just the date component 
         timeline_df['date'] = timeline_df['date'].dt.date
         
-        # Group by date and severity
-        severity_pivot = pd.pivot_table(
-            timeline_df, 
-            index='date',
-            columns='severity', 
-            values='ioc',
-            aggfunc='count',
-            fill_value=0
-        ).reset_index()
+        # Count IOCs by date
+        date_counts = timeline_df.groupby('date').size().reset_index(name='count')
         
-        # Ensure all severity levels are present
-        for severity in ['Critical', 'High', 'Medium', 'Clean', 'Error']:
-            if severity not in severity_pivot.columns:
-                severity_pivot[severity] = 0
-        
-        # Calculate daily total
-        severity_pivot['Total'] = severity_pivot[['Critical', 'High', 'Medium', 'Clean', 'Error']].sum(axis=1)
-        
-        # Create the stacked area chart
+        # Create the chart with just the total line
         fig = go.Figure()
-        
-        # Add traces in specific order (most severe first)
-        for severity, color in [
-            ('Critical', SEVERITY_COLORS['Critical']),
-            ('High', SEVERITY_COLORS['High']),
-            ('Medium', SEVERITY_COLORS['Medium']),
-            ('Clean', SEVERITY_COLORS['Clean']),
-            ('Error', SEVERITY_COLORS['Error'])
-        ]:
-            if severity in severity_pivot.columns:
-                fig.add_trace(go.Scatter(
-                    x=severity_pivot['date'], 
-                    y=severity_pivot[severity],
-                    mode='lines',
-                    stackgroup='one',
-                    name=severity,
-                    line=dict(width=0.5, color=color),
-                    fillcolor=color
-                ))
         
         # Add total line
         fig.add_trace(go.Scatter(
-            x=severity_pivot['date'],
-            y=severity_pivot['Total'],
-            mode='lines',
+            x=date_counts['date'],
+            y=date_counts['count'],
             name='Total',
-            line=dict(color='white', width=2, dash='dot')
+            mode='lines+markers',
+            line=dict(color='white', width=2),
+            marker=dict(size=6, color='white', line=dict(width=1, color=COLORS['background'])),
+            hovertemplate='<b>%{y}</b> IOCs<br>%{x}<extra></extra>'
         ))
-            
+        
+        # Update layout
         fig.update_layout(
-            title="IOC Detection Timeline",
             template='plotly_dark',
             paper_bgcolor='rgba(0,0,0,0)',
             plot_bgcolor='rgba(0,0,0,0)',
-            margin=dict(l=20, r=20, t=40, b=40),
-            height=300,
-            yaxis_title="Number of IOCs",
-            xaxis_title="Date",
-            legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+            margin=dict(l=10, r=10, t=30, b=20),
+            height=350,
+            yaxis_title='Number of IOCs',
+            xaxis_title='Date',
+            showlegend=False,
             hovermode="x unified"
         )
         
-        return pio.to_html(fig, full_html=False, include_plotlyjs=False, config={'displayModeBar': False, 'responsive': True})
+        # Better grid lines
+        fig.update_xaxes(
+            showgrid=True,
+            gridwidth=0.5,
+            gridcolor='rgba(255,255,255,0.1)'
+        )
+        
+        fig.update_yaxes(
+            showgrid=True,
+            gridwidth=0.5,
+            gridcolor='rgba(255,255,255,0.1)'
+        )
+        
+        return pio.to_html(
+            fig, 
+            full_html=False, 
+            include_plotlyjs=False,
+            config={'displayModeBar': True, 'responsive': True}
+        )
     
     except Exception as e:
         logger.error(f"Error creating timeline chart: {e}")
-        return f"<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> Could not create timeline chart: {str(e)}</div>"
+        return f"<div class='alert alert-warning'><i class='fas fa-exclamation-triangle'></i> Could not create timeline chart: {str(e)}</div>"
 
-def create_ioc_type_timeline(df: pd.DataFrame) -> str:
-    """Create a timeline showing IOC types over time"""
-    try:
-        # Check for valid date columns
-        date_columns = ['vt_last_analysis_date_dt', 'vt_first_submission_date_dt']
-        valid_date_col = None
-        
-        for col in date_columns:
-            if col in df.columns and pd.to_datetime(df[col], errors='coerce').notna().any():
-                valid_date_col = col
-                break
-        
-        if not valid_date_col:
-            return "<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> IOC type timeline unavailable due to missing date information</div>"
-        
-        # Create a copy of the dataframe with only valid dates
-        timeline_df = df.copy()
-        timeline_df['date'] = pd.to_datetime(timeline_df[valid_date_col], errors='coerce')
-        timeline_df = timeline_df[timeline_df['date'].notna()]
-        
-        if len(timeline_df) == 0:
-            return "<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> No valid IOC type timeline data available</div>"
-        
-        # Extract date for grouping
-        timeline_df['date'] = timeline_df['date'].dt.date
-        
-        # Create a pivot table of IOC types over time
-        ioc_pivot = pd.pivot_table(
-            timeline_df, 
-            index='date',
-            columns='ioc_type', 
-            values='ioc',
-            aggfunc='count',
-            fill_value=0
-        ).reset_index()
-        
-        # Get ioc types for creating bar chart
-        ioc_types = [col for col in ioc_pivot.columns if col != 'date']
-        
-        # Create color map for IOC types
-        color_map = {
-            'hash': '#4cc9f0',
-            'ip': '#f72585',
-            'domain': '#4361ee',
-            'url': '#f9c74f',
-            'email': '#43aa8b'
-        }
-        
-        # Create the grouped bar chart
-        fig = go.Figure()
-        
-        # Add a trace for each IOC type
-        for ioc_type in ioc_types:
-            fig.add_trace(go.Bar(
-                x=ioc_pivot['date'],
-                y=ioc_pivot[ioc_type],
-                name=ioc_type,
-                marker_color=color_map.get(ioc_type, '#555555')
-            ))
-            
-        fig.update_layout(
-            title="IOC Types Over Time",
-            template='plotly_dark',
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            margin=dict(l=20, r=20, t=40, b=40),
-            height=300,
-            yaxis_title="Number of IOCs",
-            xaxis_title="Date",
-            legend_title="IOC Type",
-            legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
-            hovermode="closest",
-            barmode='group'
-        )
-        
-        return pio.to_html(fig, full_html=False, include_plotlyjs=False, config={'displayModeBar': False, 'responsive': True})
-    
-    except Exception as e:
-        logger.error(f"Error creating IOC type timeline: {e}")
-        return f"<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> Could not create IOC type chart: {str(e)}</div>"
-
-def create_detection_heatmap(df: pd.DataFrame) -> str:
-    """Create a heatmap showing detection percentages over time"""
-    try:
-        # Check for valid date and detection percentage data
-        if 'vt_last_analysis_date_dt' not in df.columns or 'vt_detection_percentage' not in df.columns:
-            return "<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> Detection heatmap unavailable due to missing data</div>"
-        
-        # Create a copy with only valid data
-        heatmap_df = df.copy()
-        heatmap_df['date'] = pd.to_datetime(heatmap_df['vt_last_analysis_date_dt'], errors='coerce')
-        heatmap_df = heatmap_df[heatmap_df['date'].notna()]
-        
-        # Convert detection percentage to numeric
-        heatmap_df['detection'] = pd.to_numeric(heatmap_df['vt_detection_percentage'], errors='coerce')
-        heatmap_df = heatmap_df[heatmap_df['detection'].notna()]
-        
-        if len(heatmap_df) == 0:
-            return "<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> No valid detection data available for heatmap</div>"
-        
-        # Get day of week
-        heatmap_df['day_of_week'] = heatmap_df['date'].dt.day_name()
-        heatmap_df['date'] = heatmap_df['date'].dt.date
-        
-        # Calculate average detection by date and day of week
-        avg_detection = heatmap_df.groupby(['date', 'day_of_week'])['detection'].mean().reset_index()
-        
-        # Sort by proper day order
-        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        
-        # Map days to integers for sorting
-        day_map = {day: i for i, day in enumerate(day_order)}
-        avg_detection['day_num'] = avg_detection['day_of_week'].map(day_map)
-        avg_detection = avg_detection.sort_values('day_num')
-        
-        # Create the heatmap
-        fig = px.density_heatmap(
-            avg_detection,
-            x='date',
-            y='day_of_week',
-            z='detection',
-            title="Detection Percentage Heatmap",
-            color_continuous_scale=[
-                [0, COLORS['success']],
-                [0.25, COLORS['info']],
-                [0.5, COLORS['warning']],
-                [1, COLORS['danger']]
-            ],
-            category_orders={"day_of_week": day_order}
-        )
-            
-        fig.update_layout(
-            template='plotly_dark',
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            margin=dict(l=20, r=20, t=40, b=20),
-            height=250,
-            xaxis_title="Date",
-            yaxis_title="Day of Week",
-            coloraxis_colorbar=dict(title="Detection %"),
-            hovermode="closest"
-        )
-        
-        return pio.to_html(fig, full_html=False, include_plotlyjs=False, config={'displayModeBar': False, 'responsive': True})
-    
-    except Exception as e:
-        logger.error(f"Error creating detection heatmap: {e}")
-        return f"<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> Could not create detection heatmap: {str(e)}</div>"
-
-def generate_table_row(row: pd.Series, idx: int, with_ms_defender: bool = True, with_metadata: bool = False) -> str:
+def generate_table_row(row: pd.Series, idx: int, with_ms_defender: bool = True, 
+                      with_metadata: bool = False) -> str:
     """Generate an HTML table row for displaying an IOC"""
-    vt_link = row.get('vt_link', '')
-    if not isinstance(vt_link, str) or not vt_link.startswith(('http://', 'https://')):
-        vt_link = ''
-        
+    ioc_type_icon = get_ioc_type_icon(row['ioc_type'])
+    safe_ioc = sanitize_text(row['ioc'], for_js=True)
     error_display = ""
+    
     if pd.notna(row.get('error')) and row.get('error'):
         error_display = f'<div class="error-msg">{row["error"]}</div>'
     
-    # Use sanitize_for_js for the copy button to prevent issues with quotes
-    safe_ioc = sanitize_for_js(row['ioc'])
-        
+    vt_link = row.get('vt_link', '')
+    if not isinstance(vt_link, str) or not vt_link.startswith(('http://', 'https://')):
+        vt_link = ''
+    
     basic_cols = f"""
         <td>
             <div class="ioc-container">
@@ -474,32 +288,37 @@ def generate_table_row(row: pd.Series, idx: int, with_ms_defender: bool = True, 
             </div>
             {error_display}
         </td>
-        <td>{row['ioc_type']}</td>
-        <td>{row.get('vt_detection_percentage', 'N/A')}</td>
-        <td class="{get_severity_class(row['severity'])}">{get_severity_badge(row['severity'])}</td>
+        <td><i class="fas {ioc_type_icon}"></i> {row['ioc_type']}</td>
+        <td data-sort="{row.get('vt_detection_percentage', 0)}">{row.get('vt_detection_percentage', 'N/A')}%</td>
+        <td class="severity-{row['severity']}">{get_severity_badge(row['severity'])}</td>
     """
     
     if with_ms_defender:
-        basic_cols += f"<td>{get_ms_defender_span(row.get('ms_defender', 'unknown'))}</td>"
+        basic_cols += f"<td>{get_ms_defender_status(row.get('ms_defender', 'unknown'))}</td>"
         
     basic_cols += f"""
         <td>{row.get('detection_names', '')}</td>
-        <td><a href='{vt_link}' target='_blank'>Investigate</a></td>
+        <td><a href='{vt_link}' target='_blank' class="action-link"><i class="fas fa-external-link-alt"></i> View</a></td>
     """
     
     if with_metadata:
-        # Ensure category is included in the metadata columns
-        category_value = row.get('category', '')
-        if not category_value and row.get('category_display'):
-            category_value = row.get('category_display', '')
+        category = row.get('category', '') or row.get('category_display', '')
+        detection_ratio = row.get('vt_detection_ratio', 'N/A')
         
+        # Format the ratio with better styling
+        ratio_parts = detection_ratio.split('/') if isinstance(detection_ratio, str) else ['0', '0']
+        if len(ratio_parts) == 2:
+            ratio_html = f'<span class="detection-ratio"><span class="ratio-positive">{ratio_parts[0]}</span>/<span class="ratio-total">{ratio_parts[1]}</span></span>'
+        else:
+            ratio_html = detection_ratio
+            
         return f"""
         <tr class="{'bg-ms-known' if row['ms_defender'] == 'known' else ''}" data-ioc-type="{row['ioc_type']}" data-severity="{row['severity']}" data-ms-detection="{row['ms_defender']}" data-ioc-index="{idx}">
             {basic_cols}
-            <td>{row.get('vt_detection_ratio', 'N/A')}</td>
-            <td>{category_value}</td>
+            <td>{ratio_html}</td>
+            <td>{category}</td>
             <td>{row.get('vt_last_analysis_date', 'N/A')}</td>
-            <td><a href='{vt_link}' target='_blank'>View</a></td>
+            <td><a href='{vt_link}' target='_blank' class="action-link"><i class="fas fa-search"></i> Details</a></td>
         </tr>
         """
     
@@ -509,12 +328,25 @@ def generate_table_row(row: pd.Series, idx: int, with_ms_defender: bool = True, 
     </tr>
     """
 
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles datetime and pandas objects"""
+    def default(self, obj):
+        if isinstance(obj, (pd.Timestamp, datetime)):
+            return obj.isoformat()
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
 def generate_html_report(results_list: List[Dict], 
                          scan_stats: Dict, 
                          output_path: Optional[str] = None, 
                          input_filename: str = "IOCs") -> Optional[str]:
     """
-    Generate a static HTML report from scan results with timeline visualization
+    Generate an HTML report from scan results with improved timeline visualization
     
     Args:
         results_list: List of result dictionaries with detection information
@@ -530,10 +362,10 @@ def generate_html_report(results_list: List[Dict],
         return None
     
     try:
-        # Process and transform data
+        # Process data
         df, severity_counts, ms_defender_counts = process_data(results_list)
         
-        # Extract stats from scan_stats or calculate from data
+        # Extract stats
         total_iocs = scan_stats.get('total_iocs', len(df))
         malicious_count = scan_stats.get('malicious_count', df[df["severity"] == "Critical"].shape[0])
         suspicious_count = scan_stats.get('suspicious_count', df[df["severity"] == "High"].shape[0])
@@ -556,48 +388,28 @@ def generate_html_report(results_list: List[Dict],
         charts = {}
         
         # Basic distribution charts
-        charts['severity_chart'] = create_chart(
+        charts['severity_chart'] = create_pie_chart(
             severity_counts, 
-            'pie', 
-            names='Severity', 
-            values='Count',
-            color='Severity', 
+            'Severity', 
+            'Count', 
             color_map=SEVERITY_COLORS,
-            title='Severity'
+            title='Severity Distribution'
         )
         
-        charts['ms_defender_chart'] = create_chart(
+        charts['ms_defender_chart'] = create_pie_chart(
             ms_defender_counts, 
-            'pie', 
-            names='Status', 
-            values='Count',
-            color='Status', 
+            'Status', 
+            'Count',
             color_map={
-                'known': COLORS['ms_known'], 
-                'unknown': COLORS['ms_unknown'], 
-                'N/A': COLORS['secondary']
+                'known': '#e03131', 
+                'unknown': '#868e96', 
+                'N/A': '#495057'
             },
-            title='MS Defender'
+            title='MS Defender Detection'
         )
         
-        # Timeline charts - wrapped in try/except to ensure they don't break the report
-        try:
-            charts['detection_timeline'] = create_timeline_chart(df)
-        except Exception as e:
-            logger.error(f"Failed to generate detection timeline: {e}")
-            charts['detection_timeline'] = f"<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> Could not create timeline chart: {str(e)}</div>"
-            
-        try:
-            charts['ioc_type_timeline'] = create_ioc_type_timeline(df)
-        except Exception as e:
-            logger.error(f"Failed to generate IOC type timeline: {e}")
-            charts['ioc_type_timeline'] = f"<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> Could not create IOC type chart: {str(e)}</div>"
-            
-        try:
-            charts['detection_heatmap'] = create_detection_heatmap(df)
-        except Exception as e:
-            logger.error(f"Failed to generate detection heatmap: {e}")
-            charts['detection_heatmap'] = f"<div class='alert alert-warning'><i class='fas fa-exclamation-circle'></i> Could not create detection heatmap: {str(e)}</div>"
+        # Timeline chart - only showing total
+        charts['detection_timeline'] = create_timeline_chart(df)
         
         # Filter dataframes for tables
         critical_df = df[df['severity'].isin(['Critical', 'High'])]
@@ -620,10 +432,9 @@ def generate_html_report(results_list: List[Dict],
                                    for severity in ['Critical', 'High', 'Medium', 'Clean', 'Error'] 
                                    if severity in df['severity'].unique()])
         
-        # Prepare export data - convert to serializable format
+        # Prepare export data
         export_data = []
         for _, row in df.iterrows():
-            # Convert all values to simple types for JSON
             export_row = {}
             for k, v in row.items():
                 if k != 'last_analysis_results':
@@ -637,12 +448,12 @@ def generate_html_report(results_list: List[Dict],
                         export_row[k] = v
             export_data.append(export_row)
         
-        # Convert to JSON for the CSV export functionality
+        # Convert to JSON for CSV export
         try:
             csv_export_data = json.dumps(export_data, cls=DateTimeEncoder)
         except Exception as e:
             logger.error(f"Error serializing data to JSON: {e}")
-            # Create a fallback version with minimal data
+            # Create fallback with minimal data
             fallback_data = []
             for item in export_data:
                 safe_item = {
@@ -656,7 +467,7 @@ def generate_html_report(results_list: List[Dict],
             csv_export_data = json.dumps(fallback_data)
         
         # Prepare template variables
-        input_filename_name = sanitize_for_html(Path(input_filename).name)
+        input_filename_name = sanitize_text(Path(input_filename).name)
         generation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         # Build the HTML template
@@ -665,88 +476,379 @@ def generate_html_report(results_list: List[Dict],
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="generator" content="VTScanner/1.3.1">
+    <meta name="generator" content="VTScanner/1.5.1">
     <title>VirusTotal Scan Results - {input_filename_name}</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <style>
-        body {{ font-family: 'Segoe UI', sans-serif; background-color: #0b0c10; color: #ffffff; margin: 0; padding: 0; }}
-        .container {{ width: 95%; margin: 0 auto; padding: 15px; }}
-        .header {{ text-align: center; margin-bottom: 20px; color: #4361ee; padding: 15px 0; border-bottom: 1px solid #4361ee; }}
-        .header h1 {{ font-size: 2.2rem; margin-bottom: 10px; }}
-        .header p {{ font-size: 1rem; opacity: 0.8; }}
-        .card {{ background-color: #1f2833; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); margin-bottom: 20px; overflow: hidden; }}
-        .card-header {{ background-color: #1f2833; color: #e0e1dd; padding: 12px 15px; font-weight: bold; font-size: 1.1rem; border-bottom: 2px solid rgba(255, 255, 255, 0.1); display: flex; justify-content: space-between; align-items: center; }}
+        :root {{
+            --color-primary: {COLORS['primary']};
+            --color-secondary: {COLORS['secondary']};
+            --color-success: {COLORS['success']};
+            --color-info: {COLORS['info']};
+            --color-warning: {COLORS['warning']};
+            --color-danger: {COLORS['danger']};
+            --color-bg: {COLORS['background']};
+            --color-card: {COLORS['card_bg']};
+            --color-text: {COLORS['text']};
+            --color-border: {COLORS['border']};
+        }}
+        
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        
+        body {{ 
+            font-family: 'Segoe UI', -apple-system, 'Roboto', sans-serif; 
+            background-color: var(--color-bg); 
+            color: var(--color-text); 
+            line-height: 1.5;
+        }}
+        
+        .container {{ width: 95%; max-width: 1400px; margin: 0 auto; padding: 15px; }}
+        
+        .header {{ 
+            text-align: center; 
+            margin-bottom: 20px; 
+            padding: 20px 0; 
+            border-bottom: 1px solid var(--color-border);
+            border-radius: 8px;
+        }}
+        
+        .header h1 {{ font-size: 2.2rem; margin-bottom: 10px; color: var(--color-primary); }}
+        .header p {{ font-size: 1rem; color: var(--color-secondary); }}
+        
+        .card {{ 
+            background-color: var(--color-card); 
+            border-radius: 8px; 
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); 
+            margin-bottom: 20px; 
+            overflow: hidden; 
+            border: 1px solid var(--color-border);
+        }}
+        
+        .card-header {{ 
+            padding: 15px; 
+            font-weight: 600; 
+            font-size: 1.1rem; 
+            border-bottom: 2px solid var(--color-border); 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+        }}
+        
+        .card-header i {{ margin-right: 8px; color: var(--color-primary); }}
         .card-header .actions {{ display: flex; gap: 8px; }}
         .card-body {{ padding: 15px; }}
+        
         .row {{ display: flex; flex-wrap: wrap; margin: 0 -10px; }}
         .col {{ flex: 1; min-width: 200px; padding: 0 10px; margin-bottom: 15px; }}
-        .stats-card {{ text-align: center; padding: 15px 10px; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100%; }}
-        .stats-card i {{ margin-bottom: 8px; opacity: 0.9; }}
-        .stats-card h4 {{ margin-top: 5px; margin-bottom: 10px; font-size: 1rem; opacity: 0.9; }}
+        
+        .stats-card {{ 
+            text-align: center; 
+            padding: 20px 10px; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100%; 
+        }}
+        
+        .stats-card i {{ margin-bottom: 10px; font-size: 2.5rem; }}
+        .stats-card h4 {{ font-size: 1rem; color: var(--color-secondary); margin: 5px 0 10px; }}
         .stats-card h2 {{ font-size: 2.2rem; margin: 0; font-weight: 600; }}
-        .table-container {{ overflow-x: auto; border-radius: 4px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) inset; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 10px; overflow: hidden; }}
-        th, td {{ padding: 10px 12px; text-align: left; border: 1px solid #444; }}
-        th {{ background-color: #4361ee; color: white; font-weight: 600; position: sticky; top: 0; box-shadow: 0 2px 2px rgba(0, 0, 0, 0.1); }}
-        tr:nth-child(even) {{ background-color: rgba(255, 255, 255, 0.05); }}
-        tr:hover {{ background-color: rgba(255, 255, 255, 0.1); }}
-        .chart-container {{ width: 100%; position: relative; }}
-        .footer {{ text-align: center; margin-top: 30px; padding: 15px 0; border-top: 1px solid #555555; color: #e0e1dd; font-size: 1rem; }}
+        
+        .table-container {{ 
+            overflow-x: auto; 
+            border-radius: 4px; 
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1); 
+            background-color: rgba(0, 0, 0, 0.1);
+            border: 1px solid var(--color-border);
+        }}
+        
+        table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+        
+        th, td {{ 
+            padding: 10px 12px; 
+            text-align: left; 
+            border: 1px solid var(--color-border); 
+        }}
+        
+        th {{ 
+            background-color: var(--color-primary); 
+            color: white; 
+            font-weight: 600; 
+            position: sticky; 
+            top: 0; 
+            z-index: 10;
+        }}
+        
+        tr:nth-child(even) {{ background-color: rgba(255, 255, 255, 0.03); }}
+        tr:hover {{ background-color: rgba(255, 255, 255, 0.05); }}
+        
+        .chart-container {{ width: 100%; position: relative; border-radius: 4px; overflow: hidden; }}
+        
+        .footer {{ 
+            text-align: center; 
+            margin-top: 30px; 
+            padding: 15px 0; 
+            border-top: 1px solid var(--color-border); 
+            color: var(--color-secondary); 
+            font-size: 1rem; 
+        }}
+        
         .ioc-container {{ display: flex; align-items: center; justify-content: space-between; gap: 5px; }}
-        .ioc-value {{ max-width: calc(100% - 30px); overflow: hidden; text-overflow: ellipsis; }}
-        .copy-btn {{ background: none; border: none; color: #4361ee; cursor: pointer; padding: 3px 6px; border-radius: 3px; transition: all 0.2s; opacity: 0.6; }}
-        .copy-btn:hover {{ opacity: 1; background-color: rgba(67, 97, 238, 0.1); }}
-        .error-msg {{ color: #f72585; font-size: 0.85rem; margin-top: 4px; }}
-        .notification {{ position: fixed; top: 20px; right: 20px; padding: 10px 20px; background-color: #4cc9f0; color: white; border-radius: 4px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); z-index: 1000; opacity: 0; transform: translateY(-20px); transition: all 0.3s; }}
+        .ioc-value {{ 
+            max-width: calc(100% - 30px); 
+            overflow: hidden; 
+            text-overflow: ellipsis; 
+            font-family: 'Consolas', 'Monaco', monospace;
+        }}
+        
+        .copy-btn {{ 
+            background: none; 
+            border: none; 
+            color: var(--color-primary); 
+            cursor: pointer; 
+            padding: 3px 6px; 
+            border-radius: 3px; 
+            opacity: 0.7; 
+        }}
+        
+        .copy-btn:hover {{ opacity: 1; background-color: rgba(77, 171, 247, 0.1); }}
+        
+        .error-msg {{ color: var(--color-danger); font-size: 0.85rem; margin-top: 4px; }}
+        
+        .notification {{ 
+            position: fixed; 
+            top: 20px; 
+            right: 20px; 
+            padding: 10px 20px; 
+            background-color: var(--color-success); 
+            color: white; 
+            border-radius: 4px; 
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); 
+            z-index: 1000; 
+            opacity: 0; 
+            transform: translateY(-20px); 
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px; 
+        }}
+        
+        .notification i {{ font-size: 1.2rem; }}
         .notification.show {{ opacity: 1; transform: translateY(0); }}
-        .primary {{ color: #4361ee; }}
-        .success {{ color: #4cc9f0; }}
-        .warning {{ color: #f9c74f; }}
-        .danger {{ color: #f72585; }}
-        .ms-known {{ color: #e63946; }}
-        .ms-unknown {{ color: #6c757d; }}
-        .bg-ms-known {{ background-color: rgba(230, 57, 70, 0.15); }}
-        .severity-Critical {{ color: #f72585; font-weight: bold; }}
-        .severity-High {{ color: #f9c74f; font-weight: bold; }}
-        .severity-Medium {{ color: #4895ef; }}
-        .severity-Clean {{ color: #4cc9f0; }}
-        .severity-Error {{ color: #555555; }}
-        a {{ color: #4895ef; text-decoration: none; transition: color 0.2s; }}
-        a:hover {{ color: #4361ee; text-decoration: underline; }}
-        .filter-container {{ padding: 15px; background-color: #1f2833; border-radius: 8px; margin-bottom: 15px; border: 1px solid rgba(255, 255, 255, 0.1); }}
-        .filter-row {{ display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 15px; align-items: flex-end; }}
+        
+        .notification.success {{ background-color: var(--color-success); }}
+        .notification.warning {{ background-color: var(--color-warning); }}
+        .notification.danger {{ background-color: var(--color-danger); }}
+        .notification.info {{ background-color: var(--color-info); }}
+        
+        .ms-known {{ 
+            color: #e03131; 
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }}
+        
+        .ms-unknown {{ 
+            color: #868e96; 
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }}
+        
+        .bg-ms-known {{ background-color: rgba(224, 49, 49, 0.1); }}
+        
+        .severity-Critical {{ color: {SEVERITY_COLORS['Critical']}; font-weight: bold; }}
+        .severity-High {{ color: {SEVERITY_COLORS['High']}; font-weight: bold; }}
+        .severity-Medium {{ color: {SEVERITY_COLORS['Medium']}; }}
+        .severity-Clean {{ color: {SEVERITY_COLORS['Clean']}; }}
+        .severity-Error {{ color: {SEVERITY_COLORS['Error']}; }}
+        
+        .detection-ratio {{ display: inline-flex; align-items: center; gap: 2px; }}
+        .ratio-positive {{ color: var(--color-danger); font-weight: 500; }}
+        .ratio-total {{ color: var(--color-secondary); }}
+        
+        a {{ color: var(--color-primary); text-decoration: none; }}
+        a:hover {{ color: var(--color-info); text-decoration: underline; }}
+        
+        .action-link {{ display: inline-flex; align-items: center; gap: 5px; font-weight: 500; }}
+        
+        .filter-container {{ 
+            padding: 15px; 
+            background-color: var(--color-card); 
+            border-radius: 8px; 
+            margin-bottom: 15px; 
+            border: 1px solid var(--color-border); 
+        }}
+        
+        .filter-row {{ 
+            display: flex; 
+            flex-wrap: wrap; 
+            gap: 15px; 
+            margin-bottom: 15px; 
+            align-items: flex-end; 
+        }}
+        
         .filter-group {{ flex: 1; min-width: 200px; }}
-        .filter-group label {{ display: block; margin-bottom: 6px; font-weight: 500; opacity: 0.9; }}
-        .filter-input {{ width: 100%; padding: 8px 10px; background-color: #1f2833; color: #e0e1dd; border: 1px solid #4361ee; border-radius: 4px; font-size: 0.95rem; }}
-        .filter-btn {{ background-color: #4361ee; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 6px; }}
-        .filter-btn:hover {{ background-color: #4895ef; }}
-        .badge {{ display: inline-block; padding: 4px 8px; font-size: 0.75rem; font-weight: 600; line-height: 1; text-align: center; white-space: nowrap; vertical-align: baseline; border-radius: 10px; margin-left: 5px; }}
-        .badge-primary {{ background-color: #4361ee; color: white; }}
-        .badge-danger {{ background-color: #f72585; color: white; }}
-        .badge-warning {{ background-color: #f9c74f; color: black; }}
-        .badge-success {{ background-color: #4cc9f0; color: white; }}
-        .badge-info {{ background-color: #4895ef; color: white; }}
-        .badge-secondary {{ background-color: #555555; color: white; }}
-        .modal {{ display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.7); opacity: 0; transition: opacity 0.3s; }}
+        
+        .filter-group label {{ 
+            display: flex; 
+            align-items: center;
+            gap: 5px;
+            margin-bottom: 6px; 
+            font-weight: 500; 
+            color: var(--color-secondary);
+        }}
+        
+        .filter-input {{ 
+            width: 100%; 
+            padding: 8px 10px; 
+            background-color: rgba(0, 0, 0, 0.2); 
+            color: var(--color-text); 
+            border: 1px solid var(--color-border); 
+            border-radius: 4px; 
+            font-size: 0.95rem; 
+        }}
+        
+        .filter-input:focus {{ outline: none; border-color: var(--color-primary); }}
+        
+        .filter-btn {{ 
+            background-color: var(--color-primary); 
+            color: white; 
+            border: none; 
+            padding: 8px 15px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-weight: 600; 
+            display: flex; 
+            align-items: center; 
+            gap: 6px; 
+        }}
+        
+        .filter-btn:hover {{ background-color: var(--color-info); }}
+        
+        .badge {{ 
+            display: inline-flex; 
+            align-items: center;
+            justify-content: center;
+            padding: 4px 8px; 
+            font-size: 0.75rem; 
+            font-weight: 600; 
+            border-radius: 10px; 
+            margin-left: 5px; 
+        }}
+        
+        .badge-primary {{ background-color: var(--color-primary); color: white; }}
+        .badge-danger {{ background-color: var(--color-danger); color: white; }}
+        .badge-warning {{ background-color: var(--color-warning); color: black; }}
+        .badge-info {{ background-color: var(--color-info); color: white; }}
+        .badge-success {{ background-color: var(--color-success); color: white; }}
+        .badge-secondary {{ background-color: var(--color-secondary); color: white; }}
+        
+        .modal {{ 
+            display: none; 
+            position: fixed; 
+            z-index: 1000; 
+            left: 0; 
+            top: 0; 
+            width: 100%; 
+            height: 100%; 
+            background-color: rgba(0, 0, 0, 0.7); 
+            opacity: 0; 
+            transition: opacity 0.3s; 
+        }}
+        
         .modal.show {{ display: block; opacity: 1; }}
-        .modal-content {{ background-color: #1f2833; margin: 10% auto; padding: 20px; border-radius: 8px; max-width: 500px; box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5); transform: translateY(-20px); transition: transform 0.3s; }}
+        
+        .modal-content {{ 
+            background-color: var(--color-card); 
+            margin: 10% auto; 
+            padding: 20px; 
+            border-radius: 8px; 
+            max-width: 500px; 
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5); 
+            transform: translateY(-20px); 
+            transition: transform 0.3s; 
+            border: 1px solid var(--color-border);
+        }}
+        
         .modal.show .modal-content {{ transform: translateY(0); }}
-        .modal-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }}
-        .modal-title {{ font-size: 1.2rem; font-weight: bold; color: #e0e1dd; }}
-        .close-modal {{ background: none; border: none; font-size: 1.5rem; color: #e0e1dd; cursor: pointer; }}
-        .close-modal:hover {{ color: #f72585; }}
+        
+        .modal-header {{ 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            margin-bottom: 15px; 
+            padding-bottom: 10px; 
+            border-bottom: 1px solid var(--color-border); 
+        }}
+        
+        .modal-title {{ font-size: 1.2rem; font-weight: bold; }}
+        
+        .close-modal {{ 
+            background: none; 
+            border: none; 
+            font-size: 1.5rem; 
+            color: var(--color-text); 
+            cursor: pointer; 
+        }}
+        
+        .close-modal:hover {{ color: var(--color-danger); }}
+        
         .modal-body {{ margin-bottom: 20px; }}
+        
         .modal-footer {{ display: flex; justify-content: flex-end; gap: 10px; }}
-        .action-btn {{ background-color: #4361ee; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.85rem; display: flex; align-items: center; gap: 5px; }}
-        .action-btn:hover {{ background-color: #4895ef; }}
-        .action-btn.secondary {{ background-color: #555555; }}
+        
+        .action-btn {{ 
+            background-color: var(--color-primary); 
+            color: white; 
+            border: none; 
+            padding: 8px 12px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-weight: 600; 
+            font-size: 0.9rem; 
+            display: flex; 
+            align-items: center; 
+            gap: 5px; 
+        }}
+        
+        .action-btn:hover {{ background-color: var(--color-info); }}
+        .action-btn.secondary {{ background-color: var(--color-secondary); }}
+        
         .pagination-controls {{ display: flex; justify-content: center; margin-top: 15px; gap: 8px; }}
-        .pagination-btn {{ background-color: #1f2833; color: white; border: 1px solid #4361ee; padding: 5px 10px; border-radius: 4px; cursor: pointer; }}
-        .pagination-btn.active {{ background-color: #4361ee; }}
-        .alert {{ padding: 15px; margin-bottom: 20px; border-radius: 4px; }}
-        .alert-warning {{ background-color: rgba(249, 199, 79, 0.2); border-left: 4px solid #f9c74f; }}
-        #timeline-details {{ transition: all 0.3s ease; }}
+        
+        .pagination-btn {{ 
+            background-color: var(--color-card); 
+            color: var(--color-text); 
+            border: 1px solid var(--color-border); 
+            padding: 5px 10px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+        }}
+        
+        .pagination-btn:hover {{ border-color: var(--color-primary); }}
+        .pagination-btn.active {{ background-color: var(--color-primary); color: white; }}
+        
+        .alert {{ 
+            padding: 15px; 
+            margin-bottom: 20px; 
+            border-radius: 4px; 
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+        
+        .alert i {{ font-size: 1.2rem; }}
+        
+        .alert-warning {{ 
+            background-color: rgba(253, 126, 20, 0.15); 
+            border-left: 4px solid var(--color-warning); 
+            color: var(--color-warning);
+        }}
+        
         @media (max-width: 768px) {{
             .container {{ width: 100%; padding: 10px; }}
             .col {{ flex: 100%; }}
@@ -761,45 +863,45 @@ def generate_html_report(results_list: List[Dict],
     
     <div class="container">
         <div class="header">
-            <h1><i class="fas fa-shield-virus"></i> VirusTotal Scan Results - {input_filename_name}</h1>
-            <p>Report generated on {generation_time}</p>
+            <h1><i class="fas fa-shield-virus"></i> VirusTotal Scan Results</h1>
+            <p>{input_filename_name} • {generation_time}</p>
         </div>
         
-        <!-- Summary Stats Cards - First Row -->
+        <!-- Summary Stats Cards -->
         <div class="row">
             <div class="col">
                 <div class="card">
                     <div class="stats-card">
-                        <i class="fas fa-search fa-2x" style="color: #4895ef;"></i>
+                        <i class="fas fa-search" style="color: var(--color-info);"></i>
                         <h4>Total IOCs</h4>
-                        <h2 style="color: #4895ef;">{total_iocs}</h2>
+                        <h2 style="color: var(--color-info);">{total_iocs}</h2>
                     </div>
                 </div>
             </div>
             <div class="col">
                 <div class="card">
                     <div class="stats-card">
-                        <i class="fas fa-virus fa-2x" style="color: #f72585;"></i>
+                        <i class="fas fa-virus" style="color: var(--color-danger);"></i>
                         <h4>Malicious</h4>
-                        <h2 style="color: #f72585;">{malicious_count}</h2>
+                        <h2 style="color: var(--color-danger);">{malicious_count}</h2>
                     </div>
                 </div>
             </div>
             <div class="col">
                 <div class="card">
                     <div class="stats-card">
-                        <i class="fas fa-exclamation-triangle fa-2x" style="color: #f9c74f;"></i>
+                        <i class="fas fa-exclamation-triangle" style="color: var(--color-warning);"></i>
                         <h4>Suspicious</h4>
-                        <h2 style="color: #f9c74f;">{suspicious_count}</h2>
+                        <h2 style="color: var(--color-warning);">{suspicious_count}</h2>
                     </div>
                 </div>
             </div>
             <div class="col">
                 <div class="card">
                     <div class="stats-card">
-                        <i class="fas fa-check-circle fa-2x" style="color: #4cc9f0;"></i>
+                        <i class="fas fa-check-circle" style="color: var(--color-success);"></i>
                         <h4>Clean</h4>
-                        <h2 style="color: #4cc9f0;">{clean_count}</h2>
+                        <h2 style="color: var(--color-success);">{clean_count}</h2>
                     </div>
                 </div>
             </div>
@@ -810,25 +912,25 @@ def generate_html_report(results_list: List[Dict],
             <div class="col" style="flex: 1;">
                 <div class="card">
                     <div class="stats-card">
-                        <i class="fas fa-shield-alt fa-2x" style="color: #e63946;"></i>
+                        <i class="fas fa-shield-alt" style="color: #e03131;"></i>
                         <h4>MS Defender - Known</h4>
-                        <h2 style="color: #e63946;">{ms_known_count}</h2>
+                        <h2 style="color: #e03131;">{ms_known_count}</h2>
                     </div>
                 </div>
             </div>
             <div class="col" style="flex: 1;">
                 <div class="card">
                     <div class="stats-card">
-                        <i class="fas fa-question-circle fa-2x" style="color: #6c757d;"></i>
+                        <i class="fas fa-question-circle" style="color: #868e96;"></i>
                         <h4>MS Defender - Unknown</h4>
-                        <h2 style="color: #6c757d;">{ms_unknown_count}</h2>
+                        <h2 style="color: #868e96;">{ms_unknown_count}</h2>
                     </div>
                 </div>
             </div>
             <div class="col" style="flex: 2;">
                 <div class="card">
                     <div class="card-header">
-                        <i class="fas fa-chart-pie"></i> Detection Severity
+                        <div><i class="fas fa-chart-pie"></i> Detection Severity</div>
                     </div>
                     <div class="card-body">
                         <div class="chart-container" id="severity-chart">
@@ -840,7 +942,7 @@ def generate_html_report(results_list: List[Dict],
             <div class="col" style="flex: 2;">
                 <div class="card">
                     <div class="card-header">
-                        <i class="fas fa-shield-alt"></i> MS Defender Detection
+                        <div><i class="fas fa-shield-alt"></i> MS Defender Detection</div>
                     </div>
                     <div class="card-body">
                         <div class="chart-container" id="ms-detection-chart">
@@ -858,55 +960,14 @@ def generate_html_report(results_list: List[Dict],
                     <i class="fas fa-chart-line"></i> Timeline Analysis
                 </div>
                 <div class="actions">
-                    <button class="action-btn" id="toggle-timeline-btn">
-                        <i class="fas fa-expand"></i> Expand/Collapse
+                    <button class="action-btn" id="export-timeline-btn">
+                        <i class="fas fa-download"></i> Export Chart
                     </button>
                 </div>
             </div>
             <div class="card-body">
-                <div id="timeline-details">
-                    <div class="row">
-                        <div class="col" style="flex: 1;">
-                            <div class="card">
-                                <div class="card-header">
-                                    <i class="fas fa-calendar-alt"></i> Detection Timeline
-                                </div>
-                                <div class="card-body">
-                                    <div class="chart-container" id="detection-timeline">
+                <div class="chart-container" id="detection-timeline">
 {charts['detection_timeline']}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="row">
-                        <div class="col" style="flex: 1;">
-                            <div class="card">
-                                <div class="card-header">
-                                    <i class="fas fa-sitemap"></i> IOC Types Over Time
-                                </div>
-                                <div class="card-body">
-                                    <div class="chart-container" id="ioc-type-timeline">
-{charts['ioc_type_timeline']}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="row">
-                        <div class="col" style="flex: 1;">
-                            <div class="card">
-                                <div class="card-header">
-                                    <i class="fas fa-fire"></i> Detection Heatmap
-                                </div>
-                                <div class="card-body">
-                                    <div class="chart-container" id="detection-heatmap">
-{charts['detection_heatmap']}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
         </div>
@@ -914,7 +975,9 @@ def generate_html_report(results_list: List[Dict],
         <!-- Filter Section -->
         <div class="card">
             <div class="card-header">
-                <i class="fas fa-filter"></i> Filter Results
+                <div>
+                    <i class="fas fa-filter"></i> Filter Results
+                </div>
                 <div class="actions">
                     <button class="action-btn" id="export-csv-btn">
                         <i class="fas fa-file-csv"></i> Export to CSV
@@ -955,7 +1018,7 @@ def generate_html_report(results_list: List[Dict],
                         <button id="apply-filters-btn" class="filter-btn">
                             <i class="fas fa-filter"></i> Apply Filters
                         </button>
-                        <button id="reset-filters-btn" class="filter-btn" style="background-color: #555555;">
+                        <button id="reset-filters-btn" class="filter-btn" style="background-color: var(--color-secondary);">
                             <i class="fas fa-sync-alt"></i> Reset
                         </button>
                     </div>
@@ -965,7 +1028,7 @@ def generate_html_report(results_list: List[Dict],
 
         <!-- Critical Findings Section -->
         <div class="card">
-            <div class="card-header" style="color: #f72585;">
+            <div class="card-header" style="color: var(--color-danger);">
                 <div>
                     <i class="fas fa-exclamation-circle"></i> Critical Findings
                     <span class="badge badge-danger">{len(critical_df)}</span>
@@ -1001,7 +1064,7 @@ def generate_html_report(results_list: List[Dict],
     
         <!-- Microsoft Defender Detections Section -->
         <div class="card">
-            <div class="card-header" style="color: #e63946;">
+            <div class="card-header" style="color: #e03131;">
                 <div>
                     <i class="fas fa-shield-alt"></i> Microsoft Defender Detections
                     <span class="badge badge-primary">{ms_known_count}</span>
@@ -1036,7 +1099,7 @@ def generate_html_report(results_list: List[Dict],
     
         <!-- Microsoft Unknown Detections Section -->
         <div class="card">
-            <div class="card-header" style="color: #6c757d;">
+            <div class="card-header" style="color: #868e96;">
                 <div>
                     <i class="fas fa-question-circle"></i> Microsoft Defender - Unknown IOCs
                     <span class="badge badge-secondary">{ms_unknown_count}</span>
@@ -1069,74 +1132,74 @@ def generate_html_report(results_list: List[Dict],
             </div>
         </div>
     
-    <!-- All Results Table -->
-    <div class="card">
-        <div class="card-header">
-            <div>
-                <i class="fas fa-table"></i> All Scan Results
-                <span class="badge badge-primary">{total_iocs}</span>
+        <!-- All Results Table -->
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <i class="fas fa-table"></i> All Scan Results
+                    <span class="badge badge-primary">{total_iocs}</span>
+                </div>
+                <div class="actions">
+                    <button class="action-btn" id="copy-all-btn">
+                        <i class="fas fa-copy"></i> Copy All
+                    </button>
+                </div>
             </div>
-            <div class="actions">
-                <button class="action-btn" id="copy-all-btn">
-                    <i class="fas fa-copy"></i> Copy All
-                </button>
+            <div class="card-body">
+                <div class="table-container">
+                    <table id="results-table">
+                        <thead>
+                            <tr>
+                                <th>IOC</th>
+                                <th>Type</th>
+                                <th>Detection %</th>
+                                <th>Severity</th>
+                                <th>MS Defender</th>
+                                <th>Detection Names</th>
+                                <th>VT Link</th>
+                                <th>Detection Ratio</th>
+                                <th>Category</th>
+                                <th>Last Analysis</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {all_results_rows}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination-controls"></div>
             </div>
         </div>
-        <div class="card-body">
-            <div class="table-container">
-                <table id="results-table">
-                    <thead>
-                        <tr>
-                            <th>IOC</th>
-                            <th>Type</th>
-                            <th>Detection %</th>
-                            <th>Severity</th>
-                            <th>MS Defender</th>
-                            <th>Detection Names</th>
-                            <th>VT Link</th>
-                            <th>Detection Ratio</th>
-                            <th>Category</th>
-                            <th>Last Analysis</th>
-                            <th>Details</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {all_results_rows}
-                    </tbody>
-                </table>
-            </div>
-            <div class="pagination-controls"></div>
-        </div>
-    </div>
     
-    <!-- Export Modal -->
-    <div class="modal" id="export-modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 class="modal-title">Export Data</h2>
-                <button class="close-modal" id="close-export-modal">&times;</button>
-            </div>
-            <div class="modal-body">
-                <p>Choose your export format:</p>
-            </div>
-            <div class="modal-footer">
-                <button class="action-btn" id="export-csv-confirm">
-                    <i class="fas fa-file-csv"></i> CSV
-                </button>
-                <button class="action-btn secondary" id="cancel-export">
-                    Cancel
-                </button>
+        <!-- Export Modal -->
+        <div class="modal" id="export-modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title">Export Data</h2>
+                    <button class="close-modal" id="close-export-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p>Choose your export format:</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="action-btn" id="export-csv-confirm">
+                        <i class="fas fa-file-csv"></i> CSV
+                    </button>
+                    <button class="action-btn secondary" id="cancel-export">
+                        Cancel
+                    </button>
+                </div>
             </div>
         </div>
-    </div>
     
-    <!-- Footer -->
-    <div class="footer">
-        <p>
-            <i class="fas fa-shield-alt"></i> VirusTotal IOC Scanner | Scan completed in {scan_duration_str}
-        </p>
+        <!-- Footer -->
+        <div class="footer">
+            <p>
+                <i class="fas fa-shield-alt"></i> VirusTotal IOC Scanner | Scan completed in {scan_duration_str}
+            </p>
+        </div>
     </div>
-</div>
 
 <script>
 // Store the report data for export
@@ -1151,10 +1214,9 @@ function copyToClipboard(text) {{
     
     try {{
         const successful = document.execCommand('copy');
-        const message = successful ? 'Copied to clipboard!' : 'Copy failed';
-        showNotification(message);
+        showNotification(successful ? 'Copied to clipboard!' : 'Copy failed', successful ? 'success' : 'danger');
     }} catch (err) {{
-        showNotification('Failed to copy: ' + err);
+        showNotification('Failed to copy: ' + err, 'danger');
     }}
     
     document.body.removeChild(textarea);
@@ -1163,17 +1225,23 @@ function copyToClipboard(text) {{
 // Function to show notification
 function showNotification(message, type = 'success') {{
     const notification = document.getElementById('notification');
-    notification.textContent = message;
-    notification.className = 'notification show ' + type;
+    
+    // Add appropriate icon
+    let icon = 'fa-check-circle';
+    if (type === 'warning') icon = 'fa-exclamation-triangle';
+    if (type === 'danger') icon = 'fa-times-circle';
+    if (type === 'info') icon = 'fa-info-circle';
+    
+    notification.innerHTML = `<i class="fas ${{icon}}"></i> ${{message}}`;
+    notification.className = `notification show ${{type}}`;
     
     setTimeout(() => {{
         notification.className = 'notification';
     }}, 3000);
 }}
 
-// Client-side filtering functionality
 document.addEventListener('DOMContentLoaded', function() {{
-    // Get filter elements
+    // Get elements
     const iocTypeFilter = document.getElementById('ioc-type-filter');
     const severityFilter = document.getElementById('severity-filter');
     const msDetectionFilter = document.getElementById('ms-detection-filter');
@@ -1184,25 +1252,9 @@ document.addEventListener('DOMContentLoaded', function() {{
     const msUnknownTable = document.getElementById('ms-unknown-table');
     const applyFiltersBtn = document.getElementById('apply-filters-btn');
     const resetFiltersBtn = document.getElementById('reset-filters-btn');
+    const exportTimelineBtn = document.getElementById('export-timeline-btn');
     
-    // Timeline toggle
-    const toggleTimelineBtn = document.getElementById('toggle-timeline-btn');
-    const timelineDetails = document.getElementById('timeline-details');
-    
-    if (toggleTimelineBtn && timelineDetails) {{
-        // Start with timeline expanded
-        toggleTimelineBtn.addEventListener('click', function() {{
-            if (timelineDetails.style.display === 'none') {{
-                timelineDetails.style.display = 'block';
-                toggleTimelineBtn.innerHTML = '<i class="fas fa-compress"></i> Collapse';
-            }} else {{
-                timelineDetails.style.display = 'none';
-                toggleTimelineBtn.innerHTML = '<i class="fas fa-expand"></i> Expand';
-            }}
-        }});
-    }}
-    
-    // Copy functionality
+    // Copy buttons
     const copyAllBtn = document.getElementById('copy-all-btn');
     const copyCriticalBtn = document.getElementById('copy-critical-btn');
     const copyMsKnownBtn = document.getElementById('copy-msknown-btn');
@@ -1215,14 +1267,38 @@ document.addEventListener('DOMContentLoaded', function() {{
     const exportCsvConfirm = document.getElementById('export-csv-confirm');
     const cancelExport = document.getElementById('cancel-export');
     
-    // Apply filters when values change
-    if (iocTypeFilter) iocTypeFilter.addEventListener('change', applyFilters);
-    if (severityFilter) severityFilter.addEventListener('change', applyFilters);
-    if (msDetectionFilter) msDetectionFilter.addEventListener('change', applyFilters);
-    if (searchInput) searchInput.addEventListener('input', applyFilters);
-    if (applyFiltersBtn) applyFiltersBtn.addEventListener('click', applyFilters);
+    // Make tables sortable
+    initSortableTables();
     
-    // Reset filters
+    // Export timeline chart
+    if (exportTimelineBtn) {{
+        exportTimelineBtn.addEventListener('click', function() {{
+            const timelineChart = document.getElementById('detection-timeline');
+            
+            if (timelineChart && window.Plotly) {{
+                try {{
+                    const plotlyInstance = timelineChart.querySelector('.js-plotly-plot');
+                    if (plotlyInstance) {{
+                        Plotly.downloadImage(plotlyInstance, {{
+                            format: 'png',
+                            width: 1200,
+                            height: 600,
+                            filename: 'ioc_timeline'
+                        }});
+                        showNotification('Timeline chart download started', 'info');
+                    }} else {{
+                        showNotification('Chart not available', 'warning');
+                    }}
+                }} catch (err) {{
+                    console.error('Error exporting chart:', err);
+                    showNotification('Could not export chart', 'danger');
+                }}
+            }}
+        }});
+    }}
+    
+    // Apply filters
+    if (applyFiltersBtn) applyFiltersBtn.addEventListener('click', applyFilters);
     if (resetFiltersBtn) {{
         resetFiltersBtn.addEventListener('click', function() {{
             if (iocTypeFilter) iocTypeFilter.value = 'all';
@@ -1230,53 +1306,20 @@ document.addEventListener('DOMContentLoaded', function() {{
             if (msDetectionFilter) msDetectionFilter.value = 'all';
             if (searchInput) searchInput.value = '';
             applyFilters();
+            showNotification('Filters reset', 'info');
         }});
     }}
     
-    // Copy all IOCs from tables
-    if (copyAllBtn) {{
-        copyAllBtn.addEventListener('click', function() {{
-            copyTableContent(resultsTable);
-        }});
-    }}
+    // Copy functions
+    if (copyAllBtn) copyAllBtn.addEventListener('click', () => copyTableContent(resultsTable));
+    if (copyCriticalBtn) copyCriticalBtn.addEventListener('click', () => copyTableContent(criticalTable));
+    if (copyMsKnownBtn) copyMsKnownBtn.addEventListener('click', () => copyTableContent(msDetectionTable));
+    if (copyMsUnknownBtn) copyMsUnknownBtn.addEventListener('click', () => copyTableContent(msUnknownTable));
     
-    if (copyCriticalBtn) {{
-        copyCriticalBtn.addEventListener('click', function() {{
-            copyTableContent(criticalTable);
-        }});
-    }}
-    
-    if (copyMsKnownBtn) {{
-        copyMsKnownBtn.addEventListener('click', function() {{
-            copyTableContent(msDetectionTable);
-        }});
-    }}
-    
-    if (copyMsUnknownBtn) {{
-        copyMsUnknownBtn.addEventListener('click', function() {{
-            copyTableContent(msUnknownTable);
-        }});
-    }}
-    
-    // Export functionality
-    if (exportCsvBtn) {{
-        exportCsvBtn.addEventListener('click', function() {{
-            exportModal.classList.add('show');
-        }});
-    }}
-    
-    if (closeExportModal) {{
-        closeExportModal.addEventListener('click', function() {{
-            exportModal.classList.remove('show');
-        }});
-    }}
-    
-    if (cancelExport) {{
-        cancelExport.addEventListener('click', function() {{
-            exportModal.classList.remove('show');
-        }});
-    }}
-    
+    // Export functions
+    if (exportCsvBtn) exportCsvBtn.addEventListener('click', () => exportModal.classList.add('show'));
+    if (closeExportModal) closeExportModal.addEventListener('click', () => exportModal.classList.remove('show'));
+    if (cancelExport) cancelExport.addEventListener('click', () => exportModal.classList.remove('show'));
     if (exportCsvConfirm) {{
         exportCsvConfirm.addEventListener('click', function() {{
             exportToCsv();
@@ -1284,7 +1327,70 @@ document.addEventListener('DOMContentLoaded', function() {{
         }});
     }}
     
-    // Function to copy all IOCs from a table
+    // Function to initialize sortable tables
+    function initSortableTables() {{
+        document.querySelectorAll('table th').forEach((header, index) => {{
+            if (index < 4) {{ // Only make first 4 columns sortable
+                header.style.cursor = 'pointer';
+                header.innerHTML += ' <i class="fas fa-sort"></i>';
+                
+                header.addEventListener('click', function() {{
+                    const table = this.closest('table');
+                    sortTable(table, index);
+                }});
+            }}
+        }});
+    }}
+    
+    // Function to sort table
+    function sortTable(table, column) {{
+        const tbody = table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const headers = table.querySelectorAll('th');
+        const header = headers[column];
+        
+        // Determine sort direction
+        const currentDirection = header.getAttribute('data-sort') || 'none';
+        const newDirection = currentDirection === 'asc' ? 'desc' : 'asc';
+        
+        // Reset all headers
+        headers.forEach(h => {{
+            h.setAttribute('data-sort', 'none');
+            h.innerHTML = h.innerHTML.replace(/ <i class="fas fa-sort.*?"><\\/i>/, ' <i class="fas fa-sort"></i>');
+        }});
+        
+        // Set new direction on current header
+        header.setAttribute('data-sort', newDirection);
+        header.innerHTML = header.innerHTML.replace(/ <i class="fas fa-sort.*?"><\\/i>/, 
+            newDirection === 'asc' ? ' <i class="fas fa-sort-up"></i>' : ' <i class="fas fa-sort-down"></i>');
+        
+        // Sort rows
+        rows.sort((a, b) => {{
+            let valueA, valueB;
+            
+            // Handle different data types
+            if (column === 2) {{ // Detection percentage
+                valueA = parseFloat(a.cells[column].getAttribute('data-sort') || '0');
+                valueB = parseFloat(b.cells[column].getAttribute('data-sort') || '0');
+            }} else {{ // Default to string comparison
+                valueA = a.cells[column].textContent.trim().toLowerCase();
+                valueB = b.cells[column].textContent.trim().toLowerCase();
+            }}
+            
+            // Compare values
+            if (typeof valueA === 'number' && typeof valueB === 'number') {{
+                return newDirection === 'asc' ? valueA - valueB : valueB - valueA;
+            }} else {{
+                return newDirection === 'asc' ? 
+                    valueA.localeCompare(valueB) : valueB.localeCompare(valueA);
+            }}
+        }});
+        
+        // Reinsert rows
+        rows.forEach(row => tbody.appendChild(row));
+    }}
+    
+    // Function to copy table content
     function copyTableContent(table) {{
         if (!table) return;
         
@@ -1297,12 +1403,9 @@ document.addEventListener('DOMContentLoaded', function() {{
             
             let iocList = [];
             rows.forEach(row => {{
-                // Only copy visible rows (respect filters)
                 if (row.style.display !== 'none') {{
                     const iocCell = row.querySelector('.ioc-value');
-                    if (iocCell) {{
-                        iocList.push(iocCell.textContent.trim());
-                    }}
+                    if (iocCell) iocList.push(iocCell.textContent.trim());
                 }}
             }});
             
@@ -1311,11 +1414,10 @@ document.addEventListener('DOMContentLoaded', function() {{
                 return;
             }}
             
-            const iocText = iocList.join('\\n');
-            copyToClipboard(iocText);
-            showNotification(`Copied ${{iocList.length}} IOCs to clipboard!`);
+            copyToClipboard(iocList.join('\\n'));
+            showNotification(`Copied ${{iocList.length}} IOCs to clipboard!`, 'success');
         }} catch (err) {{
-            console.error('Error copying table content:', err);
+            console.error('Error copying:', err);
             showNotification('Error copying IOCs', 'danger');
         }}
     }}
@@ -1323,29 +1425,18 @@ document.addEventListener('DOMContentLoaded', function() {{
     // Function to export data to CSV
     function exportToCsv() {{
         try {{
-            // Prepare CSV content
-            let csvContent = '';
-            
             // Get headers
-            const headers = [];
-            for (const key in reportData[0]) {{
-                headers.push(key);
-            }}
-            
-            csvContent += headers.join(',') + '\\n';
-            
-            // Add rows
-            reportData.forEach(row => {{
-                const values = headers.map(header => {{
-                    const value = row[header];
-                    // Escape values containing commas, quotes, or newlines
-                    if (typeof value === 'string' && (value.includes(',') || value.includes('"') || value.includes('\\n'))) {{
-                        return '"' + value.replace(/"/g, '""') + '"';
-                    }}
-                    return value !== undefined ? value : '';
-                }});
-                csvContent += values.join(',') + '\\n';
-            }});
+            const headers = Object.keys(reportData[0]);
+            const csvContent = [
+                headers.join(','),
+                ...reportData.map(row => 
+                    headers.map(header => {{
+                        const value = row[header];
+                        return typeof value === 'string' && (value.includes(',') || value.includes('"') || value.includes('\\n'))
+                            ? `"${{value.replace(/"/g, '""')}}"` : value !== undefined ? value : '';
+                    }}).join(',')
+                )
+            ].join('\\n');
             
             // Create and download file
             const blob = new Blob([csvContent], {{ type: 'text/csv;charset=utf-8;' }});
@@ -1364,168 +1455,98 @@ document.addEventListener('DOMContentLoaded', function() {{
                 setTimeout(() => URL.revokeObjectURL(url), 100);
             }}
             
-            showNotification('CSV file exported successfully!');
+            showNotification('CSV file exported successfully!', 'success');
         }} catch (err) {{
             console.error('Error exporting CSV:', err);
             showNotification('Error exporting CSV file', 'danger');
         }}
     }}
     
-    // Apply filters on page load with a slight delay
-    setTimeout(applyFilters, 300);
-    
+    // Apply filters
     function applyFilters() {{
-        try {{
-            const iocType = iocTypeFilter ? iocTypeFilter.value : 'all';
-            const severity = severityFilter ? severityFilter.value : 'all';
-            const msDetection = msDetectionFilter ? msDetectionFilter.value : 'all';
-            const searchText = searchInput ? searchInput.value.toLowerCase() : '';
+        const iocType = iocTypeFilter ? iocTypeFilter.value : 'all';
+        const severity = severityFilter ? severityFilter.value : 'all';
+        const msDetection = msDetectionFilter ? msDetectionFilter.value : 'all';
+        const searchText = searchInput ? searchInput.value.toLowerCase() : '';
+        
+        // Filter all tables
+        [resultsTable, criticalTable, msDetectionTable, msUnknownTable].forEach(table => {{
+            if (!table) return;
             
-            // Function to filter a table
-            function filterTable(table) {{
-                if (!table) return 0;
+            table.querySelectorAll('tbody tr').forEach(row => {{
+                let showRow = true;
                 
-                const rows = table.querySelectorAll('tbody tr');
-                let visibleCount = 0;
+                // Check filters
+                if (iocType !== 'all' && row.getAttribute('data-ioc-type') !== iocType) showRow = false;
+                if (severity !== 'all' && row.getAttribute('data-severity') !== severity) showRow = false;
+                if (msDetection !== 'all' && row.getAttribute('data-ms-detection') !== msDetection) showRow = false;
+                if (searchText && !row.textContent.toLowerCase().includes(searchText)) showRow = false;
                 
-                rows.forEach(row => {{
-                    let showRow = true;
-                    
-                    const rowIocType = row.getAttribute('data-ioc-type');
-                    const rowSeverity = row.getAttribute('data-severity');
-                    const rowMsDetection = row.getAttribute('data-ms-detection');
-                    
-                    // Check IOC type filter
-                    if (iocType !== 'all' && rowIocType !== iocType) {{
-                        showRow = false;
-                    }}
-                    
-                    // Check severity filter
-                    if (severity !== 'all' && rowSeverity !== severity) {{
-                        showRow = false;
-                    }}
-                    
-                    // Check MS detection filter
-                    if (msDetection !== 'all' && rowMsDetection !== msDetection) {{
-                        showRow = false;
-                    }}
-                    
-                    // Check search text
-                    if (searchText) {{
-                        const rowText = row.textContent.toLowerCase();
-                        if (!rowText.includes(searchText)) {{
-                            showRow = false;
-                        }}
-                    }}
-                    
-                    // Show or hide the row
-                    row.style.display = showRow ? '' : 'none';
-                    if (showRow) visibleCount++;
-                }});
-                
-                return visibleCount;
-            }}
-            
-            // Apply filters to all tables
-            const resultsCount = filterTable(resultsTable);
-            const criticalCount = filterTable(criticalTable);
-            const msDetectionCount = filterTable(msDetectionTable);
-            const msUnknownCount = filterTable(msUnknownTable);
-            
-            // Update the filter status
-            updateFilterStatus({{
-                results: resultsCount,
-                critical: criticalCount,
-                msDetection: msDetectionCount,
-                msUnknown: msUnknownCount
+                row.style.display = showRow ? '' : 'none';
             }});
-            
-        }} catch (err) {{
-            console.error("Error applying filters:", err);
-            showNotification('Error applying filters', 'danger');
+        }});
+        
+        // Update counts in badges
+        function updateBadgeCount(table, badge) {{
+            if (!table || !badge) return;
+            const visibleRows = Array.from(table.querySelectorAll('tbody tr'))
+                .filter(row => row.style.display !== 'none').length;
+            badge.textContent = visibleRows;
         }}
+        
+        updateBadgeCount(resultsTable, 
+            document.querySelector('#results-table')?.closest('.card')?.querySelector('.badge'));
+        updateBadgeCount(criticalTable, 
+            document.querySelector('#critical-table')?.closest('.card')?.querySelector('.badge'));
+        updateBadgeCount(msDetectionTable, 
+            document.querySelector('#ms-detection-table')?.closest('.card')?.querySelector('.badge'));
+        updateBadgeCount(msUnknownTable, 
+            document.querySelector('#ms-unknown-table')?.closest('.card')?.querySelector('.badge'));
     }}
     
-    // Update filter status in the UI
-    function updateFilterStatus(counts) {{
-        // Update results count in badge
-        const resultsBadge = document.querySelector('#results-table')?.closest('.card')?.querySelector('.badge');
-        if (resultsBadge) resultsBadge.textContent = counts.results;
-        
-        // Update critical count
-        const criticalBadge = document.querySelector('#critical-table')?.closest('.card')?.querySelector('.badge');
-        if (criticalBadge) criticalBadge.textContent = counts.critical;
-        
-        // Update MS detection count
-        const msDetectionBadge = document.querySelector('#ms-detection-table')?.closest('.card')?.querySelector('.badge');
-        if (msDetectionBadge) msDetectionBadge.textContent = counts.msDetection;
-        
-        // Update MS unknown count
-        const msUnknownBadge = document.querySelector('#ms-unknown-table')?.closest('.card')?.querySelector('.badge');
-        if (msUnknownBadge) msUnknownBadge.textContent = counts.msUnknown;
-    }}
-    
-    // Setup pagination if needed
-    setupPagination();
-    
-    function setupPagination() {{
-        if (!resultsTable) return;
-        
+    // Set up pagination for results table
+    if (resultsTable) {{
         const rows = resultsTable.querySelectorAll('tbody tr');
         const rowsPerPage = 50;
         const pageCount = Math.ceil(rows.length / rowsPerPage);
         
-        if (pageCount <= 1) return;
-        
-        // Add pagination controls
-        const paginationControls = document.querySelector('.pagination-controls');
-        if (!paginationControls) return;
-        
-        for (let i = 1; i <= pageCount; i++) {{
-            const pageBtn = document.createElement('button');
-            pageBtn.className = 'pagination-btn';
-            pageBtn.textContent = i;
-            if (i === 1) pageBtn.classList.add('active');
-            
-            pageBtn.addEventListener('click', function() {{
-                document.querySelectorAll('.pagination-btn').forEach(btn => {{
-                    btn.classList.remove('active');
+        if (pageCount > 1) {{
+            const paginationControls = document.querySelector('.pagination-controls');
+            if (paginationControls) {{
+                for (let i = 1; i <= pageCount; i++) {{
+                    const btn = document.createElement('button');
+                    btn.className = 'pagination-btn' + (i === 1 ? ' active' : '');
+                    btn.textContent = i;
+                    
+                    btn.addEventListener('click', function() {{
+                        document.querySelectorAll('.pagination-btn').forEach(b => 
+                            b.classList.remove('active'));
+                        this.classList.add('active');
+                        
+                        const start = (i - 1) * rowsPerPage;
+                        rows.forEach((row, idx) => {{
+                            row.style.display = (idx >= start && idx < start + rowsPerPage) ? '' : 'none';
+                        }});
+                    }});
+                    
+                    paginationControls.appendChild(btn);
+                }}
+                
+                // Show first page by default
+                rows.forEach((row, idx) => {{
+                    row.style.display = idx < rowsPerPage ? '' : 'none';
                 }});
-                this.classList.add('active');
-                
-                const start = (i - 1) * rowsPerPage;
-                const end = start + rowsPerPage;
-                
-                rows.forEach((row, index) => {{
-                    if (index >= start && index < end) {{
-                        row.style.display = '';
-                    }} else {{
-                        row.style.display = 'none';
-                    }}
-                }});
-                
-                resultsTable.closest('.table-container').scrollTop = 0;
-            }});
-            
-            paginationControls.appendChild(pageBtn);
-        }}
-        
-        // Show first page by default
-        for (let i = 0; i < rows.length; i++) {{
-            if (i < rowsPerPage) {{
-                rows[i].style.display = '';
-            }} else {{
-                rows[i].style.display = 'none';
             }}
         }}
     }}
     
     // Close modal on click outside
     window.addEventListener('click', function(event) {{
-        if (event.target === exportModal) {{
-            exportModal.classList.remove('show');
-        }}
+        if (event.target === exportModal) exportModal.classList.remove('show');
     }});
+    
+    // Apply filters on page load
+    setTimeout(applyFilters, 300);
 }});
 </script>
 </body>
