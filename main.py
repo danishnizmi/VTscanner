@@ -6,8 +6,7 @@ A streamlined tool to scan Indicators of Compromise (IOCs) against VirusTotal AP
 with an interactive HTML report for visualizing results, optimized for both Standard
 and Premium API usage.
 
-Authors: VT Scanner Team
-Version: 1.1.0
+Version: 1.2.0
 """
 
 import base64
@@ -19,11 +18,14 @@ import os
 import re
 import sys
 import time
+import hashlib
+import socket
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Union, Set
+from urllib.parse import urlparse
 
 # Configure logging
 logging.basicConfig(
@@ -81,11 +83,23 @@ except ImportError as e:
     print(f"{RED}Error: Missing required package: {missing_package}{RESET}")
     print(f"{YELLOW}Please install required packages using pip install:{RESET}")
     print("  pip install requests pandas tqdm plotly")
+    print("  pip install -r requirements.txt")
+    
+    # Attempt to install the missing package
+    try:
+        print(f"{YELLOW}Attempting to install missing packages...{RESET}")
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "requests", "pandas", "tqdm", "plotly"])
+        print(f"{GREEN}Package installation completed. Please run the script again.{RESET}")
+    except Exception as install_error:
+        print(f"{RED}Failed to install packages: {install_error}{RESET}")
+        print("Please install the required packages manually.")
+    
     sys.exit(1)
 
 
 class APIKeyManager:
-    """Manages VirusTotal API key storage and retrieval."""
+    """Manages VirusTotal API key storage and retrieval with secure practices."""
     
     @staticmethod
     def save(api_key: str) -> bool:
@@ -100,11 +114,24 @@ class APIKeyManager:
         """
         config_dir = Path.home() / ".vtscanner"
         config_file = config_dir / "config.json"
-        config_dir.mkdir(exist_ok=True)
         
         try:
+            # Create directory with restricted permissions
+            config_dir.mkdir(exist_ok=True, mode=0o700)
+            
+            # Add a simple encryption key based on hostname (basic obfuscation)
+            salt = socket.gethostname().encode()
+            enc_key = hashlib.sha256(salt).hexdigest()[:16]
+            
+            # Simple XOR obfuscation (not true encryption but better than plaintext)
+            def xor_obfuscate(text, key):
+                return ''.join(chr(ord(c) ^ ord(key[i % len(key)])) for i, c in enumerate(text))
+            
+            obfuscated_key = xor_obfuscate(api_key, enc_key)
+            
+            # Save with secure permissions
             with open(config_file, 'w') as f:
-                json.dump({"api_key": api_key}, f)
+                json.dump({"api_key": obfuscated_key, "key": enc_key}, f)
                 
             # Set secure permissions (Unix-like systems)
             try:
@@ -133,7 +160,21 @@ class APIKeyManager:
             
         try:
             with open(config_file, 'r') as f:
-                return json.load(f).get("api_key")
+                config_data = json.load(f)
+                
+            obfuscated_key = config_data.get("api_key")
+            enc_key = config_data.get("key")
+            
+            if not obfuscated_key or not enc_key:
+                # Fall back to plaintext if old format
+                return config_data.get("api_key")
+            
+            # Simple XOR deobfuscation
+            def xor_deobfuscate(text, key):
+                return ''.join(chr(ord(c) ^ ord(key[i % len(key)])) for i, c in enumerate(text))
+                
+            return xor_deobfuscate(obfuscated_key, enc_key)
+            
         except Exception as e:
             logger.error(f"Error loading API key: {e}")
             return None
@@ -168,7 +209,7 @@ class IOCHelper:
     @staticmethod
     def identify_type(ioc: str) -> str:
         """
-        Identify the type of IOC (ip, domain, url, hash, email).
+        Identify the type of IOC (ip, domain, url, hash, email) with improved accuracy.
         
         Args:
             ioc: The IOC string to identify
@@ -181,31 +222,74 @@ class IOCHelper:
         
         ioc = ioc.strip().strip('"\'')
         
-        # IP address
-        if re.match(r"^(\d{1,3}\.){3}\d{1,3}$", ioc):
+        # IPv4 address - more reliable check
+        ipv4_pattern = re.compile(r'^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$')
+        if ipv4_pattern.match(ioc):
             try:
                 if all(0 <= int(p) <= 255 for p in ioc.split('.')):
                     return "ip"
             except ValueError:
                 pass
         
-        # Email address
-        if re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", ioc):
+        # IPv6 address
+        ipv6_pattern = re.compile(r'^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]+|::(ffff(:0{1,4})?:)?((25[0-5]|(2[0-4]|1?[0-9])?[0-9])\.){3}(25[0-5]|(2[0-4]|1?[0-9])?[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1?[0-9])?[0-9])\.){3}(25[0-5]|(2[0-4]|1?[0-9])?[0-9]))$')
+        if ipv6_pattern.match(ioc):
+            return "ip"
+        
+        # Email address with improved validation
+        email_pattern = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+        if email_pattern.match(ioc):
             return "email"
         
-        # Domain
-        if re.match(r"^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$", ioc):
-            return "domain"
-        
-        # URL
-        if re.match(r"^https?://", ioc) or ioc.startswith("www.") or ("/" in ioc and "." in ioc):
+        # URL - refined pattern
+        url_pattern = re.compile(r'^(https?:\/\/)?(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)$')
+        if (ioc.startswith(('http://', 'https://', 'www.')) or 
+            url_pattern.match(ioc) or 
+            ('/' in ioc and '.' in ioc and not ioc.startswith('/') and not ioc.endswith('.'))):
             return "url"
         
-        # Hash (MD5, SHA1, SHA256)
-        if re.match(r"^[a-fA-F0-9]{32}$|^[a-fA-F0-9]{40}$|^[a-fA-F0-9]{64}$", ioc):
+        # Domain - more flexible pattern
+        domain_pattern = re.compile(r'^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$')
+        if domain_pattern.match(ioc):
+            return "domain"
+        
+        # Hash (MD5, SHA1, SHA256, SHA512)
+        hash_pattern = re.compile(r'^[a-fA-F0-9]{32}$|^[a-fA-F0-9]{40}$|^[a-fA-F0-9]{64}$|^[a-fA-F0-9]{128}$')
+        if hash_pattern.match(ioc):
             return "hash"
         
         return "unknown"
+
+    @staticmethod
+    def normalize_url(url: str) -> str:
+        """
+        Normalize URLs by adding scheme if missing.
+        
+        Args:
+            url: URL to normalize
+            
+        Returns:
+            Normalized URL
+        """
+        if not url.startswith(('http://', 'https://')):
+            if url.startswith('www.'):
+                return 'http://' + url
+            return 'http://' + url
+        return url
+        
+    @staticmethod
+    def encode_url_for_vt(url: str) -> str:
+        """
+        Encode URL for VirusTotal API.
+        
+        Args:
+            url: URL to encode
+            
+        Returns:
+            Base64 encoded URL suitable for VT API
+        """
+        normalized_url = IOCHelper.normalize_url(url)
+        return base64.urlsafe_b64encode(normalized_url.encode()).decode().rstrip('=')
 
 
 class VirusTotalScanner:
@@ -229,7 +313,8 @@ class VirusTotalScanner:
         self.session = requests.Session()
         self.session.headers.update({
             "x-apikey": api_key,
-            "User-Agent": f"VTScanner/1.1.0 ({scan_mode})"
+            "Accept": "application/json",
+            "User-Agent": f"VTScanner/1.2.0 ({scan_mode})"
         })
         self.session.verify = False  # Disable SSL verification
         self.base_url = "https://www.virustotal.com/api/v3"
@@ -246,6 +331,7 @@ class VirusTotalScanner:
         self.total_engines: float = 0
         self.critical_count: int = 0
         self.results_list: List[Dict] = []
+        self.ms_known_count: int = 0
 
     def print_detection_bar(self, positives: int, total: int) -> None:
         """
@@ -358,7 +444,8 @@ class VirusTotalScanner:
                 "vt_last_analysis_date": domain_result.get("vt_last_analysis_date", ""),
                 "category": f"Email Domain: {domain_result.get('category', '')}",
                 "detection_names": domain_result.get("detection_names", ""),
-                "error": ""
+                "error": "",
+                "ms_defender": domain_result.get("ms_defender", "unknown")
             }
             return email_result
         else:
@@ -380,7 +467,7 @@ class VirusTotalScanner:
         self.last_request_time = time.time()
 
     def _get_endpoint_and_link(self, ioc: str, ioc_type: str) -> Tuple[str, str]:
-        """Generate API endpoint and link for the specified IOC."""
+        """Generate API endpoint and link for the specified IOC with improved validation."""
         endpoint = ""
         vt_link = ""
         
@@ -391,19 +478,28 @@ class VirusTotalScanner:
             endpoint = f"{self.base_url}/domains/{ioc}"
             vt_link = f"https://www.virustotal.com/gui/domain/{ioc}"
         elif ioc_type == "url":
-            if ioc.startswith("www."):
-                ioc = "http://" + ioc
             try:
-                encoded_url = base64.urlsafe_b64encode(ioc.encode()).decode().strip("=")
+                # Ensure URL has a protocol
+                if not ioc.startswith(('http://', 'https://')):
+                    ioc = 'http://' + ioc if ioc.startswith('www.') else 'http://' + ioc
+                
+                # Properly encode the URL
+                encoded_url = base64.urlsafe_b64encode(ioc.encode()).decode().rstrip('=')
                 endpoint = f"{self.base_url}/urls/{encoded_url}"
                 vt_link = f"https://www.virustotal.com/gui/url/{encoded_url}"
             except Exception as e:
-                logger.error(f"URL encoding error: {e}")
+                logger.error(f"URL encoding error for {ioc}: {e}")
+                # Return an empty tuple so the error can be properly handled
                 return "", ""
         elif ioc_type == "hash":
-            endpoint = f"{self.base_url}/files/{ioc}"
-            vt_link = f"https://www.virustotal.com/gui/file/{ioc}"
-            
+            # Validate the hash is properly formed
+            if re.match(r'^[a-fA-F0-9]{32}$|^[a-fA-F0-9]{40}$|^[a-fA-F0-9]{64}$|^[a-fA-F0-9]{128}$', ioc):
+                endpoint = f"{self.base_url}/files/{ioc}"
+                vt_link = f"https://www.virustotal.com/gui/file/{ioc}"
+            else:
+                logger.error(f"Invalid hash format: {ioc}")
+                return "", ""
+        
         return endpoint, vt_link
 
     def _make_api_request(self, endpoint: str, vt_link: str, original_ioc: str, ioc_type: str) -> Dict:
@@ -415,9 +511,25 @@ class VirusTotalScanner:
                 response = self.session.get(endpoint, timeout=30)
                 
                 if response.status_code == 429:
-                    print(f"{YELLOW}Rate limited. Waiting 60 seconds...{RESET}")
-                    time.sleep(60)
+                    retry_after = int(response.headers.get('Retry-After', 60))
+                    print(f"{YELLOW}Rate limited. Waiting {retry_after} seconds...{RESET}")
+                    time.sleep(retry_after)
                     continue
+                    
+                # Handle error status codes
+                if response.status_code == 404:
+                    self.error_count += 1
+                    return {
+                        "ioc": original_ioc, 
+                        "ioc_type": ioc_type, 
+                        "error": "Not found in VirusTotal database", 
+                        "vt_link": vt_link,
+                        "vt_positives": 0,
+                        "vt_total": 0,
+                        "vt_detection_ratio": "0/0",
+                        "vt_detection_percentage": 0,
+                        "ms_defender": "unknown"
+                    }
                     
                 response.raise_for_status()
                 result = response.json()
@@ -426,7 +538,7 @@ class VirusTotalScanner:
                 return self._parse_vt_response(result, original_ioc, ioc_type, vt_link)
                 
             except requests.exceptions.RequestException as e:
-                if attempt < max_retries - 1 and not str(e).startswith("404"):
+                if attempt < max_retries - 1 and not "404" in str(e):
                     print(f"{YELLOW}Attempt {attempt+1} failed: {str(e)}. Retrying...{RESET}")
                     time.sleep(5)
                 else:
@@ -443,8 +555,48 @@ class VirusTotalScanner:
                         "vt_positives": 0,
                         "vt_total": 0,
                         "vt_detection_ratio": "0/0",
-                        "vt_detection_percentage": 0
+                        "vt_detection_percentage": 0,
+                        "ms_defender": "unknown"
                     }
+
+    def _has_microsoft_detection(self, results: Dict) -> bool:
+        """
+        Check if Microsoft Defender detected the IOC as malicious.
+        
+        Args:
+            results: Dictionary containing scan results
+            
+        Returns:
+            True if Microsoft detected it, False otherwise
+        """
+        if not isinstance(results, dict):
+            return False
+        
+        # Check for common Microsoft Defender engine names
+        ms_engines = [
+            'microsoft', 'defender', 'windows defender', 'msft', 
+            'microsoft security essentials', 'microsoft safety scanner'
+        ]
+        
+        # Check all engines in the results
+        for engine_name, result in results.items():
+            engine_lower = engine_name.lower()
+            
+            if any(ms_engine in engine_lower for ms_engine in ms_engines):
+                # Check if the result indicates a detection
+                if isinstance(result, dict) and result.get('category') in ['malicious', 'suspicious']:
+                    return True
+                    
+                # For older API responses
+                if isinstance(result, dict) and result.get('result'):
+                    if result.get('result') not in ['', 'clean', 'undetected']:
+                        return True
+                        
+                # Legacy format support
+                if isinstance(result, str) and result not in ['', 'clean', 'undetected']:
+                    return True
+                    
+        return False
 
     def _parse_vt_response(self, result: Dict, original_ioc: str, ioc_type: str, vt_link: str) -> Dict:
         """Parse and extract relevant information from the VT API response."""
@@ -478,7 +630,11 @@ class VirusTotalScanner:
         # Get category/type details for domains and IPs
         category = ""
         if ioc_type == "domain" or ioc_type == "ip":
-            category = attributes.get("categories", {}).get("Webroot", "")
+            categories = attributes.get("categories", {})
+            if categories:
+                # Get first 3 categories from different providers
+                category_list = [f"{provider}: {cat}" for provider, cat in list(categories.items())[:3]]
+                category = "; ".join(category_list)
             
             if not category and attributes.get("category"):
                 category = attributes.get("category")
@@ -490,15 +646,37 @@ class VirusTotalScanner:
             file_type = attributes.get("type_description", "")
             file_size = attributes.get("size", 0)
             
+        # Check if Microsoft Defender detected it
+        last_analysis_results = attributes.get("last_analysis_results", {})
+        ms_defender = "unknown"
+        if self._has_microsoft_detection(last_analysis_results):
+            ms_defender = "known"
+            self.ms_known_count += 1
+        
         # Get detection names for malicious/suspicious indicators
         detection_names = []
-        if malicious + suspicious > 0 and "last_analysis_results" in attributes:
-            results = attributes["last_analysis_results"]
-            for engine, engine_result in results.items():
-                if engine_result.get("category") in ["malicious", "suspicious"]:
-                    detection_name = engine_result.get("result", "")
-                    if detection_name:
-                        detection_names.append(f"{engine}: {detection_name}")
+        if malicious + suspicious > 0 and last_analysis_results:
+            # Sort engines by reputation (malicious first, then suspicious)
+            sorted_engines = []
+            for engine, engine_result in last_analysis_results.items():
+                category = "unknown"
+                if isinstance(engine_result, dict):
+                    category = engine_result.get("category", "unknown")
+                result_value = ""
+                if isinstance(engine_result, dict):
+                    result_value = engine_result.get("result", "")
+                elif isinstance(engine_result, str):
+                    result_value = engine_result
+                    
+                if category in ["malicious", "suspicious"] or (category == "unknown" and result_value):
+                    priority = 1 if category == "malicious" else 2
+                    sorted_engines.append((priority, engine, result_value))
+            
+            # Sort by priority and get top detections
+            sorted_engines.sort()
+            for _, engine, result_value in sorted_engines[:10]:  # Show top 10 detections
+                if result_value:
+                    detection_names.append(f"{engine}: {result_value}")
 
         # Update counters for reporting
         if malicious + suspicious > 0:
@@ -538,10 +716,11 @@ class VirusTotalScanner:
             "category": category,
             "file_type": file_type,
             "file_size": file_size,
-            "detection_names": "; ".join(detection_names[:5]),  # Limit to top 5
+            "detection_names": "; ".join(detection_names),
             "error": "",
-            # Include raw results for better MS detection
-            "last_analysis_results": attributes.get("last_analysis_results", {})
+            "ms_defender": ms_defender,
+            # Include raw results for better processing but exclude from CSV
+            "last_analysis_results": last_analysis_results
         }
         
         return result
@@ -607,6 +786,7 @@ class VirusTotalScanner:
         print(f"Suspicious IOCs: {self.suspicious_count}")
         print(f"Clean IOCs: {clean_count}")
         print(f"Errors: {self.error_count}")
+        print(f"MS Defender detections: {self.ms_known_count}")
         print(f"Scan duration: {scan_duration_str}")
         
         if self.malicious_count > 0:
@@ -628,7 +808,8 @@ class VirusTotalScanner:
                     # Look for columns that might contain IOCs
                     potential_ioc_cols = []
                     for col in df.columns:
-                        if any(kw in col.lower() for kw in ['ioc', 'indicator', 'ip', 'domain', 'url', 'hash', 'md5', 'sha', 'email']):
+                        col_lower = str(col).lower()
+                        if any(kw in col_lower for kw in ['ioc', 'indicator', 'ip', 'domain', 'url', 'hash', 'md5', 'sha', 'email']):
                             potential_ioc_cols.append(col)
                     
                     # If no obvious IOC columns, use all columns
@@ -644,14 +825,54 @@ class VirusTotalScanner:
                                 iocs.append({"ioc": value, "ioc_type": ioc_type})
                 except Exception as e:
                     print(f"{RED}Error reading Excel file: {str(e)}{RESET}")
+            
+            elif file_ext in ['.csv']:
+                # CSV file
+                try:
+                    # Try with pandas first for better handling
+                    df = pd.read_csv(file_path, encoding='utf-8', error_bad_lines=False, warn_bad_lines=True)
+                    # Look for columns that might contain IOCs
+                    potential_ioc_cols = []
+                    for col in df.columns:
+                        col_lower = str(col).lower()
+                        if any(kw in col_lower for kw in ['ioc', 'indicator', 'ip', 'domain', 'url', 'hash', 'md5', 'sha', 'email']):
+                            potential_ioc_cols.append(col)
+                            
+                    # If no obvious IOC columns, use all columns
+                    if not potential_ioc_cols:
+                        potential_ioc_cols = df.columns
+                        
+                    # Extract IOCs from the dataframe
+                    for col in potential_ioc_cols:
+                        for value in df[col].dropna():
+                            value = str(value).strip()
+                            if value and not value.startswith('#'):
+                                ioc_type = IOCHelper.identify_type(value)
+                                if ioc_type != "unknown":
+                                    iocs.append({"ioc": value, "ioc_type": ioc_type})
+                except Exception as e:
+                    print(f"{YELLOW}Error parsing CSV with pandas: {str(e)}{RESET}")
+                    print(f"{YELLOW}Falling back to simple CSV parser...{RESET}")
+                    
+                    # Fallback to simple CSV parser
+                    with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                        csv_reader = csv.reader(f)
+                        for row in csv_reader:
+                            for cell in row:
+                                cell = cell.strip()
+                                if cell and not cell.startswith('#'):
+                                    ioc_type = IOCHelper.identify_type(cell)
+                                    if ioc_type != "unknown":
+                                        iocs.append({"ioc": cell, "ioc_type": ioc_type})
             else:
-                # Treat as text file (CSV, TXT, etc.)
+                # Treat as text file (TXT, etc.)
                 with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith('#'):
                             ioc_type = IOCHelper.identify_type(line)
-                            iocs.append({"ioc": line, "ioc_type": ioc_type})
+                            if ioc_type != "unknown":  # Only add valid IOCs
+                                iocs.append({"ioc": line, "ioc_type": ioc_type})
         except Exception as e:
             print(f"{RED}Error reading file: {str(e)}{RESET}")
             return []
@@ -679,16 +900,18 @@ class VirusTotalScanner:
         """Export results to CSV file."""
         # Convert to DataFrame for easier processing
         try:
-            self.dataframe = pd.DataFrame(results)
+            # Make a copy of results without the raw analysis results
+            export_results = []
+            for result in results:
+                result_copy = {k: v for k, v in result.items() if k != 'last_analysis_results'}
+                export_results.append(result_copy)
+                
+            self.dataframe = pd.DataFrame(export_results)
             
             # Ensure vt_detection_percentage is numeric
             if 'vt_detection_percentage' in self.dataframe.columns:
                 self.dataframe['vt_detection_percentage'] = pd.to_numeric(
                     self.dataframe['vt_detection_percentage'], errors='coerce')
-                
-            # Remove raw results column before saving to CSV
-            if 'last_analysis_results' in self.dataframe.columns:
-                self.dataframe = self.dataframe.drop(columns=['last_analysis_results'])
                 
             # Save to CSV
             self.dataframe.to_csv(output_path, index=False)
@@ -719,7 +942,8 @@ class VirusTotalScanner:
             'error_count': self.error_count,
             'critical_count': self.critical_count,
             'scan_start_time': self.scan_start_time,
-            'total_engines': self.total_engines
+            'total_engines': self.total_engines,
+            'ms_known_count': self.ms_known_count
         }
         
         # Generate HTML report using the imported function
@@ -732,6 +956,7 @@ class VirusTotalScanner:
             )
             return report_path
         except Exception as e:
+            logger.error(f"Error generating HTML report: {str(e)}")
             print(f"{RED}Error generating HTML report: {str(e)}{RESET}")
             return None
 
@@ -755,7 +980,8 @@ class VirusTotalBatchScanner:
         self.session = requests.Session()
         self.session.headers.update({
             "x-apikey": api_key,
-            "User-Agent": "VTBatchScanner/1.1.0 (Premium)"
+            "Accept": "application/json",
+            "User-Agent": "VTBatchScanner/1.2.0 (Premium)"
         })
         self.session.verify = False
         self.base_url = "https://www.virustotal.com/api/v3"
@@ -773,8 +999,19 @@ class VirusTotalBatchScanner:
         if not hashes:
             return {}
         
-        url = f"{self.base_url}/files"
-        data = {"data": {"hashes": hashes}}
+        # Validate hashes before sending
+        valid_hashes = []
+        for hash_str in hashes:
+            if re.match(r'^[a-fA-F0-9]{32}$|^[a-fA-F0-9]{40}$|^[a-fA-F0-9]{64}$|^[a-fA-F0-9]{128}$', hash_str):
+                valid_hashes.append(hash_str)
+            else:
+                logger.warning(f"Skipping invalid hash: {hash_str}")
+        
+        if not valid_hashes:
+            return {}
+            
+        url = f"{self.base_url}/files/batch"
+        data = {"data": {"hashes": valid_hashes}}
         
         try:
             response = self.session.post(url, json=data)
@@ -797,13 +1034,15 @@ class VirusTotalBatchScanner:
         if not urls:
             return {}
         
-        # Encode URLs
+        # Normalize and encode URLs
         encoded_urls = []
         for url in urls:
             try:
-                if url.startswith("www."):
-                    url = "http://" + url
-                encoded_url = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
+                normalized_url = url
+                if not url.startswith(('http://', 'https://')):
+                    normalized_url = 'http://' + url if url.startswith('www.') else 'http://' + url
+                    
+                encoded_url = base64.urlsafe_b64encode(normalized_url.encode()).decode().rstrip('=')
                 encoded_urls.append(encoded_url)
             except Exception as e:
                 logger.error(f"Error encoding URL {url}: {e}")
@@ -835,12 +1074,31 @@ class VirusTotalBatchScanner:
             Dict: Combined API responses
         """
         results = {}
+        # Validate IPs first
+        valid_ips = []
+        ipv4_pattern = re.compile(r'^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$')
+        ipv6_pattern = re.compile(r'^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]+|::(ffff(:0{1,4})?:)?((25[0-5]|(2[0-4]|1?[0-9])?[0-9])\.){3}(25[0-5]|(2[0-4]|1?[0-9])?[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1?[0-9])?[0-9])\.){3}(25[0-5]|(2[0-4]|1?[0-9])?[0-9]))$')
+        
         for ip in ips:
+            if ipv4_pattern.match(ip):
+                try:
+                    if all(0 <= int(p) <= 255 for p in ip.split('.')):
+                        valid_ips.append(ip)
+                except ValueError:
+                    logger.warning(f"Skipping invalid IPv4: {ip}")
+            elif ipv6_pattern.match(ip):
+                valid_ips.append(ip)
+            else:
+                logger.warning(f"Skipping invalid IP: {ip}")
+        
+        for ip in valid_ips:
             try:
                 url = f"{self.base_url}/ip_addresses/{ip}"
                 response = self.session.get(url)
                 response.raise_for_status()
                 results[ip] = response.json()
+                # Add delay between requests
+                time.sleep(0.5)
             except requests.exceptions.RequestException as e:
                 logger.error(f"Error processing IP {ip}: {e}")
                 results[ip] = {"error": str(e)}
@@ -859,12 +1117,18 @@ class VirusTotalBatchScanner:
             Dict: Combined API responses
         """
         results = {}
-        for domain in domains:
+        # Validate domains first
+        domain_pattern = re.compile(r'^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$')
+        valid_domains = [domain for domain in domains if domain_pattern.match(domain)]
+        
+        for domain in valid_domains:
             try:
                 url = f"{self.base_url}/domains/{domain}"
                 response = self.session.get(url)
                 response.raise_for_status()
                 results[domain] = response.json()
+                # Add delay between requests
+                time.sleep(0.5)
             except requests.exceptions.RequestException as e:
                 logger.error(f"Error processing domain {domain}: {e}")
                 results[domain] = {"error": str(e)}
@@ -882,11 +1146,55 @@ def main():
     print(f"\n{BLUE}This tool uses the Premium VirusTotal API for high-throughput scanning.{RESET}")
     print(f"{YELLOW}Features static HTML report generation and enhanced visualizations.{RESET}")
     
+    # Check for command line arguments
+    if len(sys.argv) > 1:
+        # Check for help flag
+        if sys.argv[1].lower() in ['--help', '-h', '/?']:
+            print("\nUsage:")
+            print("  python main.py [input_file] [output_directory]")
+            print("\nOptions:")
+            print("  --help, -h     Show this help message")
+            print("  --version, -v  Show version information")
+            print("\nArguments:")
+            print("  input_file        Path to file containing IOCs")
+            print("  output_directory  Directory to save reports (optional)")
+            sys.exit(0)
+            
+        # Check for version flag
+        if sys.argv[1].lower() in ['--version', '-v']:
+            print("\nVirusTotal IOC Scanner v1.2.0")
+            print("Copyright (c) 2025 VT Scanner Team")
+            sys.exit(0)
+            
+        # Use the first argument as input file
+        input_file = sys.argv[1]
+        
+        # Check if the file exists
+        if not os.path.exists(input_file):
+            print(f"{RED}Error: File not found: {input_file}{RESET}")
+            sys.exit(1)
+            
+        # Use the second argument as output directory if provided
+        output_dir = None
+        if len(sys.argv) > 2:
+            output_dir = sys.argv[2]
+            try:
+                # Create the directory if it doesn't exist
+                Path(output_dir).mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                print(f"{RED}Error creating output directory: {e}{RESET}")
+                sys.exit(1)
+    else:
+        # Interactive mode
+        input_file = ""
+        output_dir = None
+    
     # Get API key
     api_key = APIKeyManager.load() or os.environ.get("VT_API_KEY")
     if api_key:
-        if input(f"\n{BOLD}Use saved API key? (Y/n): {RESET}").lower() == 'n':
-            api_key = getpass.getpass(f"{BOLD}Enter your VirusTotal Premium API key: {RESET}")
+        if not input_file:  # Only ask in interactive mode
+            if input(f"\n{BOLD}Use saved API key? (Y/n): {RESET}").lower() == 'n':
+                api_key = getpass.getpass(f"{BOLD}Enter your VirusTotal Premium API key: {RESET}")
     else:
         print(f"\n{YELLOW}No saved API key found.{RESET}")
         api_key = getpass.getpass(f"{BOLD}Enter your VirusTotal Premium API key: {RESET}")
@@ -895,40 +1203,64 @@ def main():
         print(f"{RED}Error: No API key provided. Exiting.{RESET}")
         sys.exit(1)
 
-    if not APIKeyManager.load() and input(f"{BOLD}Save this API key? (Y/n): {RESET}").lower() != 'n':
-        if APIKeyManager.save(api_key):
-            print(f"{GREEN}API key saved successfully.{RESET}")
-        else:
-            print(f"{YELLOW}Failed to save API key.{RESET}")
+    if not APIKeyManager.load() and not input_file:  # Only ask in interactive mode
+        if input(f"{BOLD}Save this API key? (Y/n): {RESET}").lower() != 'n':
+            if APIKeyManager.save(api_key):
+                print(f"{GREEN}API key saved successfully.{RESET}")
+            else:
+                print(f"{YELLOW}Failed to save API key.{RESET}")
 
-    # Get input file
-    input_file = ""
-    while not input_file or not os.path.exists(input_file):
-        input_file = input(f"\n{BOLD}Enter the path to your IOC file: {RESET}")
-        if not input_file:
-            print(f"{RED}Please enter a valid file path.{RESET}")
-        elif not os.path.exists(input_file):
-            print(f"{RED}File not found: {input_file}{RESET}")
+    # Get input file if not provided via command line
+    if not input_file:
+        while not input_file or not os.path.exists(input_file):
+            input_file = input(f"\n{BOLD}Enter the path to your IOC file: {RESET}")
+            if not input_file:
+                print(f"{RED}Please enter a valid file path.{RESET}")
+            elif not os.path.exists(input_file):
+                print(f"{RED}File not found: {input_file}{RESET}")
 
-    # Get output file for CSV
-    csv_output_file = input(f"\n{BOLD}Enter output CSV file path (Enter for default): {RESET}")
+    # Get output directory and files if not provided
+    if not output_dir:
+        output_dir_input = input(f"\n{BOLD}Enter output directory (Enter for default): {RESET}")
+        if output_dir_input.strip():
+            output_dir = output_dir_input
+            try:
+                # Create the directory if it doesn't exist
+                Path(output_dir).mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                print(f"{RED}Error creating output directory: {e}{RESET}")
+                print(f"{YELLOW}Using default directory.{RESET}")
+                output_dir = None
     
-    # Get output file for HTML report
-    html_output_file = input(f"\n{BOLD}Enter output HTML file path (Enter for default): {RESET}")
+    # Set up output paths
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    input_file_path = Path(input_file)
     
-    # Worker configuration
-    max_workers = 10  # Default for Premium API
-    try:
-        worker_input = input(f"\n{BOLD}Enter max number of parallel workers (default: 10): {RESET}")
-        if worker_input.strip():
-            max_workers = int(worker_input)
-            if max_workers < 1:
-                max_workers = 1
-            elif max_workers > 20:
-                print(f"{YELLOW}Large number of workers may lead to unstable performance. Capping at 20.{RESET}")
-                max_workers = 20
-    except ValueError:
-        print(f"{YELLOW}Invalid input. Using default value of 10 workers.{RESET}")
+    if output_dir:
+        output_dir_path = Path(output_dir)
+        csv_output_file = str(output_dir_path / f"{input_file_path.stem}_vt_report_{timestamp}.csv")
+        html_output_file = str(output_dir_path / f"{input_file_path.stem}_vt_report_{timestamp}.html")
+    else:
+        csv_output_file = str(input_file_path.parent / f"{input_file_path.stem}_vt_report_{timestamp}.csv")
+        html_output_file = str(input_file_path.parent / f"{input_file_path.stem}_vt_report_{timestamp}.html")
+    
+    # Ask for worker configuration
+    if not sys.argv[1:]:  # Interactive mode
+        max_workers = 10  # Default for Premium API
+        try:
+            worker_input = input(f"\n{BOLD}Enter max number of parallel workers (default: 10): {RESET}")
+            if worker_input.strip():
+                max_workers = int(worker_input)
+                if max_workers < 1:
+                    max_workers = 1
+                elif max_workers > 20:
+                    print(f"{YELLOW}Large number of workers may lead to unstable performance. Capping at 20.{RESET}")
+                    max_workers = 20
+        except ValueError:
+            print(f"{YELLOW}Invalid input. Using default value of 10 workers.{RESET}")
+    else:
+        # Non-interactive mode, use default
+        max_workers = 10
     
     print(f"\n{BLUE}Starting scan with {max_workers} worker{'' if max_workers == 1 else 's'}...{RESET}")
     
@@ -941,6 +1273,13 @@ def main():
         html_path = scanner.generate_html_report(input_file, html_output_file)
         if html_path:
             print(f"\n{GREEN}HTML report generated: {html_path}{RESET}")
+            # Try to open the report in the default browser
+            try:
+                print(f"{BLUE}Opening report in browser...{RESET}")
+                webbrowser.open(f'file://{os.path.abspath(html_path)}')
+            except Exception as e:
+                print(f"{YELLOW}Could not open browser: {e}{RESET}")
+                print(f"{YELLOW}Please open the HTML report manually.{RESET}")
     
     print(f"\n{GREEN}Thank you for using the VirusTotal IOC Scanner!{RESET}")
 
@@ -952,9 +1291,7 @@ if __name__ == "__main__":
         print(f"\n\n{YELLOW}Process interrupted by user. Exiting.{RESET}")
         sys.exit(0)
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.error(f"Unexpected error: {e}", exc_info=True)
         print(f"\n{RED}An unexpected error occurred: {str(e)}{RESET}")
         print(f"{YELLOW}Check vt_scanner.log for details.{RESET}")
-        import traceback
-        traceback.print_exc()
         sys.exit(1)
