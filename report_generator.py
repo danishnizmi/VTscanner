@@ -269,7 +269,7 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
     # Convert to JSON for the CSV export functionality
     csv_export_data = json.dumps(export_data)
     
-    # HTML template with all styles directly embedded
+    # HTML template with all styles directly embedded and curly braces properly escaped
     html_template = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -280,13 +280,7 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
     <style>
-        body {{ 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            background-color: #0b0c10; 
-            color: #ffffff; 
-            margin: 0; 
-            padding: 0; 
-        }}
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0b0c10; color: #ffffff; margin: 0; padding: 0; }}
         .container {{ width: 95%; margin: 0 auto; padding: 20px; }}
         .header {{ text-align: center; margin-bottom: 30px; color: #4361ee; padding: 20px 0; border-bottom: 1px solid #4361ee; }}
         .header h1 {{ font-size: 2.5rem; margin-bottom: 10px; }}
@@ -727,51 +721,51 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
     const reportData = {csv_export_data};
     
     // Function to copy text to clipboard
-    function copyToClipboard(text) {
+    function copyToClipboard(text) {{
         const textarea = document.createElement('textarea');
         textarea.value = text;
         document.body.appendChild(textarea);
         textarea.select();
         
-        try {
+        try {{
             const successful = document.execCommand('copy');
             const message = successful ? 'Copied to clipboard!' : 'Copy failed';
             showNotification(message);
-        } catch (err) {
+        }} catch (err) {{
             showNotification('Failed to copy: ' + err);
-        }
+        }}
         
         document.body.removeChild(textarea);
-    }
+    }}
     
     // Function to show notification
-    function showNotification(message, type = 'success') {
+    function showNotification(message, type = 'success') {{
         const notification = document.getElementById('notification');
         notification.textContent = message;
         notification.className = 'notification show ' + type;
         
-        setTimeout(() => {
+        setTimeout(() => {{
             notification.className = 'notification';
-        }, 3000);
-    }
+        }}, 3000);
+    }}
     
     // Client-side filtering functionality
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', function() {{
         console.log("DOM fully loaded, initializing...");
         
         // Force redraw of Plotly charts to ensure they render properly
-        setTimeout(function() {
-            if (typeof Plotly !== 'undefined') {
+        setTimeout(function() {{
+            if (typeof Plotly !== 'undefined') {{
                 console.log("Redrawing charts...");
-                document.querySelectorAll('.plotly-graph-div').forEach(function(plot) {
+                document.querySelectorAll('.plotly-graph-div').forEach(function(plot) {{
                     Plotly.relayout(plot, {{
                         'autosize': true,
                         'paper_bgcolor': 'rgba(0,0,0,0)',
                         'plot_bgcolor': 'rgba(0,0,0,0)'
                     }});
-                });
-            }
-        }, 500);
+                }});
+            }}
+        }}, 500);
         
         // Get filter elements
         const iocTypeFilter = document.getElementById('ioc-type-filter');
@@ -806,129 +800,129 @@ def generate_html_report(results_list: List[Dict], scan_stats: Dict, output_path
         if (applyFiltersBtn) applyFiltersBtn.addEventListener('click', applyFilters);
         
         // Reset filters
-        if (resetFiltersBtn) {
-            resetFiltersBtn.addEventListener('click', function() {
+        if (resetFiltersBtn) {{
+            resetFiltersBtn.addEventListener('click', function() {{
                 if (iocTypeFilter) iocTypeFilter.value = 'all';
                 if (severityFilter) severityFilter.value = 'all';
                 if (msDetectionFilter) msDetectionFilter.value = 'all';
                 if (searchInput) searchInput.value = '';
                 applyFilters();
-            });
-        }
+            }});
+        }}
         
         // Copy all IOCs from tables
-        if (copyAllBtn) {
-            copyAllBtn.addEventListener('click', function() {
+        if (copyAllBtn) {{
+            copyAllBtn.addEventListener('click', function() {{
                 copyTableContent(resultsTable);
-            });
-        }
+            }});
+        }}
         
-        if (copyCriticalBtn) {
-            copyCriticalBtn.addEventListener('click', function() {
+        if (copyCriticalBtn) {{
+            copyCriticalBtn.addEventListener('click', function() {{
                 copyTableContent(criticalTable);
-            });
-        }
+            }});
+        }}
         
-        if (copyMsKnownBtn) {
-            copyMsKnownBtn.addEventListener('click', function() {
+        if (copyMsKnownBtn) {{
+            copyMsKnownBtn.addEventListener('click', function() {{
                 copyTableContent(msDetectionTable);
-            });
-        }
+            }});
+        }}
         
-        if (copyMsUnknownBtn) {
-            copyMsUnknownBtn.addEventListener('click', function() {
+        if (copyMsUnknownBtn) {{
+            copyMsUnknownBtn.addEventListener('click', function() {{
                 copyTableContent(msUnknownTable);
-            });
-        }
+            }});
+        }}
         
         // Export functionality
-        if (exportCsvBtn) {
-            exportCsvBtn.addEventListener('click', function() {
+        if (exportCsvBtn) {{
+            exportCsvBtn.addEventListener('click', function() {{
                 exportModal.classList.add('show');
-            });
-        }
+            }});
+        }}
         
-        if (closeExportModal) {
-            closeExportModal.addEventListener('click', function() {
+        if (closeExportModal) {{
+            closeExportModal.addEventListener('click', function() {{
                 exportModal.classList.remove('show');
-            });
-        }
+            }});
+        }}
         
-        if (cancelExport) {
-            cancelExport.addEventListener('click', function() {
+        if (cancelExport) {{
+            cancelExport.addEventListener('click', function() {{
                 exportModal.classList.remove('show');
-            });
-        }
+            }});
+        }}
         
-        if (exportCsvConfirm) {
-            exportCsvConfirm.addEventListener('click', function() {
+        if (exportCsvConfirm) {{
+            exportCsvConfirm.addEventListener('click', function() {{
                 exportToCsv();
                 exportModal.classList.remove('show');
-            });
-        }
+            }});
+        }}
         
         // Function to copy all IOCs from a table
-        function copyTableContent(table) {
+        function copyTableContent(table) {{
             if (!table) return;
             
-            try {
+            try {{
                 const rows = table.querySelectorAll('tbody tr');
-                if (rows.length === 0) {
+                if (rows.length === 0) {{
                     showNotification('No IOCs to copy', 'warning');
                     return;
-                }
+                }}
                 
-                let iocList = []; // Define it here properly
-                rows.forEach(row => {
+                let iocList = [];
+                rows.forEach(row => {{
                     // Only copy visible rows (respect filters)
-                    if (row.style.display !== 'none') {
+                    if (row.style.display !== 'none') {{
                         const iocCell = row.querySelector('.ioc-value');
-                        if (iocCell) {
+                        if (iocCell) {{
                             iocList.push(iocCell.textContent.trim());
-                        }
-                    }
-                });
+                        }}
+                    }}
+                }});
                 
-                if (iocList.length === 0) {
+                if (iocList.length === 0) {{
                     showNotification('No visible IOCs to copy', 'warning');
                     return;
-                }
+                }}
                 
                 const iocText = iocList.join('\\n');
                 copyToClipboard(iocText);
                 showNotification(`Copied ${{iocList.length}} IOCs to clipboard!`);
-            } catch (err) {
+            }} catch (err) {{
                 console.error('Error copying table content:', err);
                 showNotification('Error copying IOCs', 'danger');
-            }
-        }
+            }}
+        }}
         
         // Function to export data to CSV
-        function exportToCsv() {
-            try {
+        function exportToCsv() {{
+            try {{
                 // Prepare CSV content
                 let csvContent = '';
                 
                 // Get headers
                 const headers = [];
-                for (const key in reportData[0]) {
+                for (const key in reportData[0]) {{
                     headers.push(key);
-                }
+                }}
                 
                 csvContent += headers.join(',') + '\\n';
                 
                 // Add rows
-                reportData.forEach(row => {
-                    const values = headers.map(header => {
+                reportData.forEach(row => {{
+                    const values = headers.map(header => {{
                         const value = row[header];
                         // Escape values containing commas, quotes, or newlines
-                        if (typeof value === 'string' && (value.includes(',') || value.includes('"') || value.includes('\\n'))) {
+                        if (typeof value === 'string' && (value.includes(',') || value.includes('"') || value.includes('\\n'))) {{
                             return '"' + value.replace(/"/g, '""') + '"';
-                        }
+                        }}
                         return value !== undefined ? value : '';
-                    });
+                    }});
                     csvContent += values.join(',') + '\\n';
-                });
+                }});
                 
                 // Create and download file
                 const blob = new Blob([csvContent], {{ type: 'text/csv;charset=utf-8;' }});
